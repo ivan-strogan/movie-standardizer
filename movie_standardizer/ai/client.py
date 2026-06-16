@@ -56,6 +56,7 @@ class AIClient:
                 model=self._model,
                 messages=messages,
                 tools=_tools.TOOLS,
+                think=False,
             )
             msg = response.message
 
