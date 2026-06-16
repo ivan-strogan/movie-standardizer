@@ -173,13 +173,16 @@ extract the movie title, release year, and video resolution.
 You MUST respond with valid JSON only — no explanation, no markdown fences. \
 The JSON must have exactly these keys:
   {
-    "title":      string,   // clean movie title, proper capitalisation
+    "title":      string,   // clean movie title — Cyrillic for Russian/Ukrainian films, English for all others
     "year":       number or null,
     "resolution": string or null,  // e.g. "1080p", "720p", "2160p", "480p"
     "content_type": "movie" | "tv_show" | "concert" | "software" | "music" | "other"
   }
 
 Rules:
+- For Russian and Ukrainian films, output the title in Cyrillic using standard \
+  Russian capitalisation (only the first word capitalised, e.g. "8 новых свиданий", \
+  "Ирония судьбы, или с лёгким паром!"). For all other non-English films, use the English title.
 - Strip all technical garbage: codec names, release group tags, source tags \
   (BluRay, WEBRip, etc.), audio tags (AAC, DTS, AC3), site prefixes (www.xxx.com).
 - Dots used as word separators (A.Goofy.Movie) → spaces (A Goofy Movie).

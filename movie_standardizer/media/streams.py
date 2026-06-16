@@ -40,6 +40,11 @@ class AudioStream:
     title:      str          # stream title tag if present
     bitrate:    int          # kbps, 0 if unknown
     is_default: bool
+    profile:    str = ""     # e.g. "Dolby TrueHD + Dolby Atmos"
+
+    @property
+    def has_atmos(self) -> bool:
+        return "atmos" in self.profile.lower()
 
     @property
     def is_surround(self) -> bool:
@@ -109,13 +114,14 @@ class ProbeResult:
     def folder_suffix(self) -> str:
         """The suffix to append to the output folder name, e.g. ' AC3'."""
         codec = self.best_audio_codec
+        atmos = any(a.has_atmos for a in self.audio if a.is_surround)
         _map = {
             "ac3":    "AC3",
-            "eac3":   "EAC3",
+            "eac3":   "EAC3 Atmos" if atmos else "EAC3",
             "dts":    "DTS",
             "dca":    "DTS",
-            "truehd": "TrueHD",
-            "mlp":    "TrueHD",
+            "truehd": "TrueHD Atmos" if atmos else "TrueHD",
+            "mlp":    "TrueHD Atmos" if atmos else "TrueHD",
         }
         label = _map.get(codec, codec.upper() if codec else "")
         return f" {label}" if label else ""
@@ -226,6 +232,7 @@ def _classify_audio(streams: list[dict]) -> list[AudioStream]:
         title    = s.get("tags", {}).get("title", "") or ""
         bitrate  = _bitrate_kbps(s)
         default  = bool(s.get("disposition", {}).get("default"))
+        profile  = s.get("profile", "") or ""
 
         key = (codec, lang, channels)
         if key in seen:
@@ -240,6 +247,7 @@ def _classify_audio(streams: list[dict]) -> list[AudioStream]:
             title      = title,
             bitrate    = bitrate,
             is_default = default,
+            profile    = profile,
         ))
 
     return result
