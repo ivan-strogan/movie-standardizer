@@ -62,7 +62,7 @@ class AudioStream:
     @property
     def action(self) -> str:
         if self.needs_ac3_encode:
-            return "encode→ac3"
+            return "encode->ac3"
         return "copy"
 
 
