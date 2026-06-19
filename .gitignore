@@ -12,3 +12,4 @@ venv/
 **/.DS_Store
 *.tmp.mkv
 *.tagged.mkv
+_notes/
