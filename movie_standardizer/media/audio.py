@@ -72,6 +72,53 @@ def select_audio_tracks(result: ProbeResult) -> list[AudioOutputTrack]:
     return output
 
 
+def apply_audio_overrides(
+    result: ProbeResult,
+    overrides: list[dict],
+) -> list[AudioOutputTrack]:
+    """Build audio output tracks from explicit user overrides.
+
+    Each override dict: {"source_index": int, "action": "copy"|"encode"|"exclude", "language": str}
+    Overrides are applied in the order given, which becomes the output track order.
+    """
+    stream_by_index = {s.index: s for s in result.audio}
+    output: list[AudioOutputTrack] = []
+
+    for ov in overrides:
+        action = ov.get("action", "copy")
+        if action == "exclude":
+            continue
+
+        src_idx = ov["source_index"]
+        stream = stream_by_index.get(src_idx)
+        if not stream:
+            continue
+
+        lang = ov.get("language") or stream.language
+
+        if action == "encode":
+            title = stream.title or (f"{lang.upper()} DD 5.1" if lang else "DD 5.1")
+            output.append(AudioOutputTrack(
+                source_index = src_idx,
+                codec_arg    = "ac3",
+                bitrate_arg  = config.AC3_BITRATE,
+                title        = title,
+                language     = lang,
+                is_default   = stream.is_default,
+            ))
+        else:
+            output.append(AudioOutputTrack(
+                source_index = src_idx,
+                codec_arg    = "copy",
+                bitrate_arg  = "",
+                title        = stream.title,
+                language     = lang,
+                is_default   = stream.is_default,
+            ))
+
+    return output
+
+
 def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
     """Build the ffmpeg -map and audio codec/bitrate arguments.
 

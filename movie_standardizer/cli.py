@@ -1,9 +1,10 @@
 """CLI entry point.
 
 Usage:
-  python main.py <path>            -- process one movie
-  python main.py --dry-run <path>  -- show plan without encoding
-  python main.py --fix-library     -- fix naming in OUTPUT_DIR
+  python main.py --web              -- launch web UI at http://localhost:8080
+  python main.py <path>             -- process one movie
+  python main.py --dry-run <path>   -- show plan without encoding
+  python main.py --fix-library      -- fix naming in OUTPUT_DIR
   python main.py --fix-library --dry-run  -- preview fixes without renaming
 """
 
@@ -22,7 +23,13 @@ def main() -> None:
 
     dry_run     = "--dry-run"     in args
     fix_library = "--fix-library" in args
-    args        = [a for a in args if a not in ("--dry-run", "--fix-library")]
+    web         = "--web"         in args
+    args        = [a for a in args if a not in ("--dry-run", "--fix-library", "--web")]
+
+    if web:
+        from .web.server import start
+        start()
+        sys.exit(0)
 
     if fix_library:
         scan_library(config.OUTPUT_DIR, dry_run=dry_run)
