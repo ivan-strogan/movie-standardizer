@@ -25,10 +25,12 @@ from .. import config
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def encode(
-    result:        ProbeResult,
-    audio_tracks:  list[AudioOutputTrack],
-    output_path:   Path,
-    dry_run:       bool = False,
+    result:             ProbeResult,
+    audio_tracks:       list[AudioOutputTrack],
+    output_path:        Path,
+    dry_run:            bool = False,
+    on_progress=None,
+    subtitle_overrides: list[dict] | None = None,
 ) -> bool:
     """Encode result.path -> output_path.
 
@@ -45,7 +47,7 @@ def encode(
     initial_crf = _crf_for_source(source_codec, input_size, duration_secs)
 
     if dry_run:
-        cmd = _build_command(input_path, tmp_path, audio_tracks, result, initial_crf)
+        cmd = _build_command(input_path, tmp_path, audio_tracks, result, initial_crf, subtitle_overrides)
         print(f"  [dry-run] CRF={initial_crf} codec={source_codec}")
         print("  " + " ".join(_quote(c) for c in cmd))
         return True
@@ -71,13 +73,18 @@ def encode(
     # Probe-encode to tune CRF (only for files longer than 20 min)
     if duration_secs > 1200:
         crf = _probe_crf(input_path, source_codec, input_size, duration_secs,
-                         initial_crf, log_path)
+                         initial_crf, log_path, on_progress=on_progress)
     else:
         crf = initial_crf
+        if on_progress:
+            on_progress(stage="crf_probe", pct=1.0, message="skipped (< 20 min)")
 
-    cmd = _build_command(input_path, tmp_path, audio_tracks, result, crf)
+    cmd = _build_command(input_path, tmp_path, audio_tracks, result, crf, subtitle_overrides)
 
     print(f"  Encoding  CRF={crf}", flush=True)
+    if on_progress:
+        on_progress(stage="encode", pct=0.0, message=f"CRF={crf}")
+
     with open(log_path, "a", encoding="utf-8") as log_fh:
         log_fh.write(f"\n# Full encode -- CRF {crf}\n")
         log_fh.write("# " + " ".join(_quote(c) for c in cmd) + "\n\n")
@@ -89,7 +96,7 @@ def encode(
             stderr=log_fh,
             text=True,
         )
-        _run_with_progress(proc, duration_secs)
+        _run_with_progress(proc, duration_secs, on_progress=on_progress)
 
     if proc.returncode != 0:
         _cleanup(tmp_path)
@@ -101,17 +108,20 @@ def encode(
     out_mb = output_path.stat().st_size / (1024 * 1024)
     ratio  = output_path.stat().st_size / input_size if input_size > 0 else 0
     print(f"  Done: {out_mb:.0f} MB  ratio={ratio:.2f}  saved {input_mb - out_mb:.0f} MB", flush=True)
+    if on_progress:
+        on_progress(stage="encode", pct=1.0, message=f"{out_mb:.0f} MB · ratio {ratio:.2f}")
     return True
 
 
 # ── Command builder ───────────────────────────────────────────────────────────
 
 def _build_command(
-    input_path:   Path,
-    output_path:  Path,
-    audio_tracks: list[AudioOutputTrack],
-    result:       ProbeResult,
-    crf:          int,
+    input_path:         Path,
+    output_path:        Path,
+    audio_tracks:       list[AudioOutputTrack],
+    result:             ProbeResult,
+    crf:                int,
+    subtitle_overrides: list[dict] | None = None,
 ) -> list[str]:
     cmd = [
         config.FFMPEG_BIN,
@@ -126,11 +136,8 @@ def _build_command(
     # Audio maps and codec args from audio processor
     cmd += build_audio_args(audio_tracks)
 
-    # Subtitles -- map all, copy or transcode as needed
-    if result.subtitles:
-        cmd += ["-map", "0:s"]
-        sub_codec = _subtitle_codec(result)
-        cmd += ["-c:s", sub_codec]
+    # Subtitles
+    cmd += _build_subtitle_args(result, subtitle_overrides)
 
     # Video encoding
     cmd += [
@@ -150,11 +157,36 @@ def _build_command(
     return cmd
 
 
-def _subtitle_codec(result: ProbeResult) -> str:
-    for s in result.subtitles:
-        if s.codec.lower() in config.SUB_TRANSCODE:
-            return config.SUB_TRANSCODE[s.codec.lower()]
-    return "copy"
+def _build_subtitle_args(result: ProbeResult, overrides: list[dict] | None) -> list[str]:
+    if not result.subtitles:
+        return []
+
+    if overrides:
+        override_by_idx = {o["source_index"]: o for o in overrides}
+        subs = [
+            (s, override_by_idx.get(s.index, {}).get("language") or s.language)
+            for s in result.subtitles
+            if override_by_idx.get(s.index, {}).get("include", True)
+        ]
+    else:
+        subs = [(s, s.language) for s in result.subtitles]
+
+    if not subs:
+        return []
+
+    args: list[str] = []
+    for sub, _ in subs:
+        args += ["-map", f"0:{sub.index}"]
+
+    # Determine per-track codec (transcode only what needs it)
+    for i, (sub, lang) in enumerate(subs):
+        codec = config.SUB_TRANSCODE.get(sub.codec.lower(), "copy")
+        args += [f"-c:s:{i}", codec]
+        if lang:
+            args += [f"-metadata:s:s:{i}", f"language={lang}"]
+
+    return args
+
 
 
 # ── CRF selection ─────────────────────────────────────────────────────────────
@@ -184,6 +216,7 @@ def _probe_crf(
     duration_secs: float,
     initial_crf:   int,
     log_path:      Path,
+    on_progress=None,
 ) -> int:
     """Encode 10 x 1-min video-only clips to find the best CRF.
 
@@ -203,11 +236,15 @@ def _probe_crf(
     crf        = initial_crf
     chosen_crf = initial_crf
 
-    def _status(msg: str) -> None:
+    n_clips = len(clips)
+
+    def _status(msg: str, probe_pct: float | None = None) -> None:
         print(f"  {msg}", flush=True)
+        if on_progress and probe_pct is not None:
+            on_progress(stage="crf_probe", pct=probe_pct, message=msg)
 
     try:
-        _status(f"Probe: extracting 10 x 1-min clips ({', '.join(pct_labels)})")
+        _status(f"Probe: extracting 10 x 1-min clips ({', '.join(pct_labels)})", 0.0)
 
         for start, clip in zip(clip_starts, clips):
             try:
@@ -227,18 +264,20 @@ def _probe_crf(
                 return crf
 
         sample_source_size = sum(c.stat().st_size for c in clips if c.exists())
-        _status("Probe: clips ready (10 x 1-min)")
+        _status("Probe: clips ready (10 x 1-min)", 0.08)
 
         with open(log_path, "a", encoding="utf-8") as lf:
             lf.write(f"\n# Probe: positions={pct_labels}, clip_dur={clip_dur}s\n")
 
         for attempt in range(8):
-            _status(f"Probe: attempt {attempt + 1}/8  CRF={crf}")
+            attempt_base = 0.08 + attempt * 0.09
+            _status(f"Probe: attempt {attempt + 1}/8  CRF={crf}", attempt_base)
 
             total_enc_size = 0
             ok = True
-            for label, clip, enc in zip(pct_labels, clips, encs):
-                _status(f"Probe: encoding clip {label}  CRF={crf}")
+            for clip_i, (label, clip, enc) in enumerate(zip(pct_labels, clips, encs)):
+                clip_pct = attempt_base + (clip_i / n_clips) * 0.09
+                _status(f"Probe: encoding clip {label}  CRF={crf}", clip_pct)
                 enc_cmd = [
                     config.FFMPEG_BIN, "-hide_banner", "-loglevel", "error",
                     "-progress", "pipe:1", "-nostats",
@@ -265,7 +304,7 @@ def _probe_crf(
                 total_enc_size += enc.stat().st_size
 
             if not ok:
-                _status("Probe: encode failed -- using current CRF")
+                _status("Probe: encode failed -- using current CRF", 0.99)
                 break
 
             ratio   = total_enc_size / sample_source_size if sample_source_size > 0 else 1.0
@@ -283,7 +322,8 @@ def _probe_crf(
             if ratio <= config.PROBE_TARGET_RATIO:
                 _status(
                     f"Probe: OK  ratio={ratio:.2f}  "
-                    f"({enc_mb:.0f}MB vs ~{src_mb:.0f}MB)  CRF={crf} accepted"
+                    f"({enc_mb:.0f}MB vs ~{src_mb:.0f}MB)  CRF={crf} accepted",
+                    0.99,
                 )
                 chosen_crf = crf
                 break
@@ -294,7 +334,8 @@ def _probe_crf(
             _status(
                 f"Probe: too large  ratio={ratio:.2f}  "
                 f"({enc_mb:.0f}MB vs ~{src_mb:.0f}MB)  "
-                f"need <{target}%  -> raising CRF {crf} -> {next_crf} (+{delta})"
+                f"need <{target}%  -> raising CRF {crf} -> {next_crf} (+{delta})",
+                attempt_base + 0.09,
             )
             chosen_crf = next_crf
             crf        = next_crf
@@ -325,7 +366,7 @@ def _probe_crf(
 
 # ── Progress bar ──────────────────────────────────────────────────────────────
 
-def _run_with_progress(proc: subprocess.Popen, duration_secs: float) -> None:
+def _run_with_progress(proc: subprocess.Popen, duration_secs: float, on_progress=None) -> None:
     fields: dict[str, str] = {}
     try:
         for line in proc.stdout:
@@ -336,12 +377,31 @@ def _run_with_progress(proc: subprocess.Popen, duration_secs: float) -> None:
             fields[key] = val
             if key == "progress":
                 _print_bar(fields, duration_secs)
+                if on_progress:
+                    _emit_encode_progress(fields, duration_secs, on_progress)
                 fields = {}
     except Exception:
         proc.kill()
         proc.wait()
         raise
     proc.wait()
+
+
+def _emit_encode_progress(fields: dict, duration_secs: float, on_progress) -> None:
+    try:
+        elapsed = int(fields.get("out_time_us", 0) or 0) / 1_000_000
+    except (ValueError, TypeError):
+        elapsed = 0
+    pct = min(elapsed / duration_secs, 0.99) if duration_secs > 0 else 0.0
+    try:
+        speed = float((fields.get("speed") or "0").replace("x", ""))
+    except (ValueError, TypeError):
+        speed = 0.0
+    eta = ""
+    if speed > 0 and duration_secs > 0:
+        remaining = (duration_secs - elapsed) / speed
+        eta = _fmt_time(remaining)
+    on_progress(stage="encode", pct=pct, message="", eta=eta)
 
 
 def _print_bar(fields: dict, duration_secs: float) -> None:

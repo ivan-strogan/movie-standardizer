@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Movie Standardizer</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #111;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: 13px;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 30px 20px 60px;
+}
+
+.app {
+  width: 580px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Title bar ── */
+.titlebar {
+  background: #1c1c1e;
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #333;
+}
+.titlebar-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ddd;
+}
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-label input[type=checkbox] { accent-color: #5b8af5; cursor: pointer; }
+.toggle-label.active { color: #5b8af5; }
+
+/* ── Panels ── */
+.panel {
+  background: #1c1c1e;
+  border-radius: 12px;
+  border: 1px solid #333;
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2e2e30;
+  cursor: pointer;
+  user-select: none;
+}
+.panel-header.no-toggle { cursor: default; }
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.panel-meta { font-size: 11px; color: #555; }
+.chevron { font-size: 10px; color: #555; transition: transform 0.2s; }
+.chevron.open { transform: rotate(180deg); }
+.panel-body { display: flex; flex-direction: column; }
+
+/* ── Torrent browser ── */
+.torrent-item {
+  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #252527;
+  transition: background 0.1s;
+}
+.torrent-item:last-child { border-bottom: none; }
+.torrent-item:hover { background: rgba(255,255,255,0.03); }
+.torrent-name { flex: 1; font-size: 12px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.torrent-size { font-size: 11px; color: #555; white-space: nowrap; width: 52px; text-align: right; }
+.torrent-refresh { padding: 8px 14px; border-top: 1px solid #2e2e30; display: flex; justify-content: space-between; align-items: center; }
+
+/* ── Add path row ── */
+.add-row {
+  padding: 10px 14px;
+  display: flex;
+  gap: 8px;
+}
+.path-input {
+  flex: 1;
+  background: #252527;
+  border: 1px solid #3a3a3c;
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: #ddd;
+  font-size: 12px;
+  outline: none;
+}
+.path-input:focus { border-color: #5b8af5; }
+.path-input::placeholder { color: #444; }
+
+/* ── Buttons ── */
+.btn {
+  border: none;
+  border-radius: 7px;
+  padding: 7px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.btn:disabled { opacity: 0.35; cursor: default; }
+.btn.primary { background: #5b8af5; color: #fff; }
+.btn.primary:hover:not(:disabled) { background: #6f9bf7; }
+.btn.secondary { background: #2c2c2e; color: #aaa; border: 1px solid #3a3a3c; }
+.btn.secondary:hover:not(:disabled) { background: #3a3a3c; color: #ddd; }
+.btn.green { background: #30a852; color: #fff; }
+.btn.green:hover:not(:disabled) { background: #38c060; }
+.btn.red { background: #c0392b; color: #fff; }
+.btn.sm { padding: 5px 10px; font-size: 11px; }
+.btn.xs { padding: 3px 8px; font-size: 11px; border-radius: 5px; }
+.move-select { background: #2c2c2e; color: #aaa; border: 1px solid #3a3a3c; border-radius: 5px; font-size: 11px; padding: 3px 6px; cursor: pointer; }
+.move-select:hover { background: #3a3a3c; color: #ddd; }
+
+/* ── Inspect / Review panel ── */
+.inspect-panel {
+  background: #1c1c1e;
+  border-radius: 12px;
+  border: 1px solid #5b8af5;
+  overflow: hidden;
+}
+.inspect-header {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2e2e30;
+  background: rgba(91,138,245,0.07);
+}
+.inspect-title { font-size: 12px; font-weight: 600; color: #5b8af5; }
+.inspect-status { font-size: 11px; color: #888; }
+.inspect-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.field-row { display: flex; align-items: center; gap: 10px; }
+.field-label { width: 78px; font-size: 11px; color: #666; flex-shrink: 0; text-align: right; }
+.field-input {
+  flex: 1;
+  background: #252527;
+  border: 1px solid #3a3a3c;
+  border-radius: 6px;
+  padding: 6px 9px;
+  color: #ddd;
+  font-size: 12px;
+  outline: none;
+}
+.field-input:focus { border-color: #5b8af5; }
+.field-value { flex: 1; font-size: 12px; color: #aaa; }
+.field-badge {
+  background: #2c2c2e;
+  border: 1px solid #3a3a3c;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #999;
+}
+
+.section-divider {
+  font-size: 10px;
+  font-weight: 600;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 0;
+  border-bottom: 1px solid #252527;
+  margin-bottom: 2px;
+}
+
+.stream-table { display: flex; flex-direction: column; gap: 6px; }
+.stream-row { display: flex; align-items: center; gap: 8px; }
+.stream-num {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #2c2c2e; color: #777; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.stream-codec {
+  width: 56px; font-size: 11px; color: #999; font-family: monospace; text-align: right;
+  flex-shrink: 0;
+}
+.stream-ch { width: 26px; font-size: 11px; color: #666; flex-shrink: 0; }
+.stream-select {
+  flex: 1;
+  background: #252527;
+  border: 1px solid #3a3a3c;
+  border-radius: 5px;
+  padding: 4px 6px;
+  color: #ccc;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+.stream-select:focus { border-color: #5b8af5; }
+.stream-action-select {
+  width: 115px;
+  background: #252527;
+  border: 1px solid #3a3a3c;
+  border-radius: 5px;
+  padding: 4px 6px;
+  color: #ccc;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.stream-action-select:focus { border-color: #5b8af5; }
+.stream-action-select.encode { color: #f5a623; border-color: #4a3820; }
+.stream-action-select.exclude { color: #555; }
+
+.atmos-badge {
+  background: rgba(91,138,245,0.15);
+  color: #5b8af5;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.sub-include { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #888; cursor: pointer; }
+.sub-include input { accent-color: #5b8af5; cursor: pointer; }
+
+.output-preview {
+  background: #252527;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #aaa;
+  border: 1px solid #2e2e30;
+  word-break: break-all;
+}
+.output-preview strong { color: #ddd; }
+
+.inspect-footer {
+  padding: 10px 14px;
+  border-top: 1px solid #2e2e30;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Spinner ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid #333;
+  border-top-color: #5b8af5;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+/* ── Queue ── */
+.queue-controls {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2e2e30;
+}
+.queue-item {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #252527;
+  transition: background 0.1s;
+}
+.queue-item:last-child { border-bottom: none; }
+.queue-item:hover { background: rgba(255,255,255,0.02); }
+.queue-num {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #2c2c2e; color: #777; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.queue-info { flex: 1; overflow: hidden; }
+.queue-name { font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-meta { font-size: 11px; color: #555; margin-top: 2px; }
+.queue-remove {
+  background: none; border: none; color: #444; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.queue-remove:hover { color: #c0392b; }
+.queue-empty { padding: 20px 14px; text-align: center; color: #444; font-size: 12px; }
+
+/* ── Active job ── */
+.active-header {
+  padding: 10px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid #2e2e30;
+  background: rgba(91,138,245,0.05);
+}
+.active-dot { color: #5b8af5; font-size: 10px; margin-right: 5px; }
+.active-label { font-size: 12px; font-weight: 600; color: #5b8af5; }
+.active-name { font-size: 12px; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+.active-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.active-footer {
+  padding: 9px 14px; border-top: 1px solid #2e2e30;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: #666;
+}
+.active-footer strong { color: #aaa; }
+
+.progress-row { display: flex; align-items: center; gap: 10px; }
+.progress-label { width: 64px; font-size: 11px; color: #888; flex-shrink: 0; }
+.progress-bar-wrap { flex: 1; height: 4px; background: #2c2c2e; border-radius: 2px; overflow: hidden; }
+.progress-bar { height: 100%; border-radius: 2px; background: #5b8af5; transition: width 0.4s ease; }
+.progress-bar.done { background: #30a852; }
+.progress-bar.error { background: #c0392b; }
+.progress-status { width: 140px; font-size: 11px; text-align: right; flex-shrink: 0; }
+.progress-status.done { color: #30a852; }
+.progress-status.active { color: #5b8af5; }
+.progress-status.waiting { color: #444; }
+.progress-status.error { color: #c0392b; }
+.progress-status.skipped { color: #555; font-style: italic; }
+
+/* ── Completed ── */
+.completed-item {
+  padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #252527;
+}
+.completed-item:last-child { border-bottom: none; }
+.completed-item:hover { background: rgba(255,255,255,0.02); }
+.check-icon { color: #30a852; font-size: 15px; flex-shrink: 0; }
+.error-icon { color: #c0392b; font-size: 15px; flex-shrink: 0; }
+.completed-info { flex: 1; overflow: hidden; }
+.completed-name { font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.completed-meta { font-size: 11px; color: #555; margin-top: 2px; }
+.badge { font-size: 11px; color: #777; background: #252527; border-radius: 5px; padding: 2px 7px; white-space: nowrap; flex-shrink: 0; }
+
+/* ── Torrent groups ── */
+.torrent-group-header {
+  padding: 5px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #161618;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid #252527;
+}
+.torrent-group-header:hover { background: #1c1c1e; }
+.group-label { font-size: 10px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.06em; flex: 1; }
+.group-count { font-size: 10px; color: #555; background: #252527; border-radius: 8px; padding: 1px 6px; }
+.group-chevron { font-size: 9px; color: #444; }
+
+/* ── Checkboxes ── */
+.torrent-check {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; flex-shrink: 0;
+  border: 1px solid #3a3a3c; border-radius: 3px;
+  background: #252527; cursor: pointer; position: relative;
+}
+.torrent-check:checked { background: #5b8af5; border-color: #5b8af5; }
+.torrent-check:checked::after { content: '✓'; position: absolute; color: #fff; font-size: 10px; top: -1px; left: 1px; }
+.t-selected { background: rgba(91,138,245,0.06) !important; }
+
+/* ── Selection bar ── */
+.select-bar {
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #2e2e30;
+  background: rgba(91,138,245,0.05);
+}
+.select-count { flex: 1; font-size: 11px; color: #5b8af5; font-weight: 500; }
+
+/* ── Inline inspect ── */
+.inline-inspect { margin: 4px 10px 8px; }
+
+/* ── AI status bar ── */
+.ai-status-bar {
+  padding: 8px 14px 6px;
+  border-bottom: 1px solid #252527;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ai-chomper {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 14px;
+  font-family: monospace;
+}
+.ai-sort-label {
+  font-size: 10px;
+  color: #444;
+}
+.ai-thinking {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #161620;
+  border: 1px solid #252535;
+  border-radius: 5px;
+  font-size: 10px;
+  font-family: monospace;
+  color: #3a4a6a;
+  max-height: 90px;
+  overflow-y: auto;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-search-query {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #4a6a8a;
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Misc ── */
+.divider { height: 1px; background: #252527; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="titlebar-title">🎬 Movie Standardizer</div>
+    <label class="toggle-label" id="dryruntoggle">
+      <input type="checkbox" id="dryrun"> Dry run
+    </label>
+  </div>
+
+  <!-- Torrents browser -->
+  <div class="panel" id="torrents-panel">
+    <div class="panel-header" onclick="togglePanel('torrents')">
+      <span class="panel-title">Torrents folder</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="panel-meta" id="torrents-path"></span>
+        <span class="chevron open" id="chevron-torrents">▾</span>
+      </div>
+    </div>
+    <div class="panel-body" id="body-torrents">
+      <div class="ai-status-bar" id="ai-status" style="visibility:hidden">
+        <div class="ai-chomper" id="ai-chomper"></div>
+        <span class="ai-sort-label">AI sorting</span>
+        <div class="ai-search-query" id="ai-search-query" style="display:none"></div>
+        <div class="ai-thinking" id="ai-thinking" style="display:none"></div>
+      </div>
+      <div id="torrents-list"></div>
+      <div class="select-bar" id="select-bar" style="display:none">
+        <span class="select-count" id="select-count"></span>
+        <button class="btn secondary sm" onclick="clearSelection()">Clear</button>
+        <button class="btn primary sm" onclick="inspectSelected()">Inspect Selected -></button>
+      </div>
+      <div class="torrent-refresh">
+        <button class="btn secondary sm" onclick="loadTorrents()">Refresh</button>
+        <span id="sort-timer" style="font-size:11px;color:#444"></span>
+        <button class="btn secondary sm" onclick="browse()">Browse…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add path / inspect -->
+  <div class="panel">
+    <div class="panel-header no-toggle">
+      <span class="panel-title">Add movie</span>
+    </div>
+    <div class="panel-body">
+      <div class="add-row">
+        <input type="text" class="path-input" id="custom-path" placeholder="Paste a path or use Browse above…">
+        <button class="btn primary" id="inspect-btn" onclick="inspectCustom()">Inspect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inspect cards (one per movie being reviewed) -->
+  <div id="inspect-cards"></div>
+
+  <!-- Queue -->
+  <div class="panel" id="queue-panel">
+    <div class="queue-controls">
+      <span class="panel-title" id="queue-title">Queue</span>
+      <button class="btn green" id="start-btn" onclick="startQueue()">▶ Start Queue</button>
+    </div>
+    <div id="queue-list">
+      <div class="queue-empty" id="queue-empty">Queue is empty — add movies above</div>
+    </div>
+  </div>
+
+  <!-- Active job -->
+  <div class="panel" id="active-panel" style="display:none">
+    <div class="active-header">
+      <div><span class="active-dot">⬤</span><span class="active-label">Processing</span></div>
+      <span class="active-name" id="active-name"></span>
+    </div>
+    <div class="active-body" id="active-body"></div>
+    <div class="active-footer">
+      <span>Elapsed: <strong id="active-elapsed">—</strong></span>
+      <span id="active-eta"></span>
+    </div>
+  </div>
+
+  <!-- Completed -->
+  <div class="panel" id="completed-panel" style="display:none">
+    <div class="panel-header no-toggle">
+      <span class="panel-title">Completed</span>
+    </div>
+    <div id="completed-list"></div>
+  </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+
+const state = {
+  torrents: [],
+  torrentOrder: null,     // null = AI not yet responded; [] or more = ready to render
+  torrentsByName: {},     // name -> torrent item (for fast lookup)
+  inspections: {},        // path -> {state:"inspecting"|"review"|"error", result, edits}
+  jobs: {},               // job_id -> job
+  jobOrder: [],           // ordered list of job_ids (queued + active + done)
+  queueRunning: false,
+  selected: new Set(),    // set of torrent names selected for batch inspect
+  groupsOpen: { movie: true, tv: false, concert: false, music: false, software: false, other: false },
+};
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (e) => handleWSMessage(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+function handleWSMessage(msg) {
+  if (msg.type === 'jobs_list') {
+    state.jobs = {};
+    state.jobOrder = [];
+    for (const job of msg.jobs) {
+      state.jobs[job.id] = job;
+      state.jobOrder.push(job.id);
+    }
+    state.queueRunning = msg.queue_running;
+    renderQueue();
+    renderActive();
+    renderCompleted();
+  } else if (msg.type === 'job_added') {
+    state.jobs[msg.job.id] = msg.job;
+    state.jobOrder.push(msg.job.id);
+    renderQueue();
+  } else if (msg.type === 'job_removed') {
+    delete state.jobs[msg.job_id];
+    state.jobOrder = state.jobOrder.filter(id => id !== msg.job_id);
+    renderQueue();
+  } else if (msg.type === 'job_update') {
+    state.jobs[msg.job.id] = msg.job;
+    renderActive();
+    renderQueue();
+    renderCompleted();
+  } else if (msg.type === 'queue_state') {
+    state.queueRunning = msg.running;
+    renderStartBtn();
+  } else if (msg.type === 'thinking_chunk') {
+    const thinkEl = document.getElementById('ai-thinking');
+    if (thinkEl) {
+      if (thinkEl.style.display === 'none') thinkEl.style.display = 'block';
+      thinkEl.textContent += msg.text;
+      thinkEl.scrollTop = thinkEl.scrollHeight;
+    }
+  } else if (msg.type === 'ai_search') {
+    const el = document.getElementById('ai-search-query');
+    if (el) {
+      el.textContent = `🔍 ${msg.query}`;
+      el.style.display = 'block';
+    }
+  }
+}
+
+// ── Torrents browser ───────────────────────────────────────────────────────
+
+async function loadTorrents() {
+  const r = await fetch('/api/torrents');
+  const data = await r.json();
+  if (data.error) {
+    document.getElementById('torrents-path').textContent = data.error;
+    return;
+  }
+  state.torrents = data.items;
+  state.torrentOrder = null;
+  state.torrentsByName = Object.fromEntries(data.items.map(t => [t.name, t]));
+  state.selected.clear();
+  const timerEl = document.getElementById('sort-timer');
+  if (timerEl) timerEl.textContent = '';
+  const thinkEl = document.getElementById('ai-thinking');
+  if (thinkEl) { thinkEl.textContent = ''; thinkEl.style.display = 'none'; }
+  const searchEl = document.getElementById('ai-search-query');
+  if (searchEl) { searchEl.textContent = ''; searchEl.style.display = 'none'; }
+  renderTorrents();
+  startChomper();
+  startSortTimer();
+  // Sizes and AI order run fully independently — sizes update cells in-place, AI reorders once
+  Promise.all([loadTorrentSizes(), classifyTorrents()]);
+}
+
+async function classifyTorrents() {
+  try {
+    const names = state.torrents.map(t => t.name);
+
+    // Call 1: identify movies — render them immediately when response arrives
+    const r1 = await fetch('/api/torrents/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    const data1 = await r1.json();
+    const movieNames = data1.movies || [];
+    const movieSet = new Set(movieNames);
+    for (const t of state.torrents) {
+      if (movieSet.has(t.name)) t.category = 'movie';
+    }
+    state.torrentOrder = movieNames;
+    renderTorrents();
+
+
+    // Call 2: categorize non-movies — append them dimmed below
+    const nonMovieNames = state.torrents
+      .filter(t => !movieSet.has(t.name))
+      .map(t => t.name);
+
+    if (nonMovieNames.length) {
+      const r2 = await fetch('/api/torrents/classify-others', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: nonMovieNames }),
+      });
+      const data2 = await r2.json();
+      const cats = data2.categories || {};
+      for (const t of state.torrents) {
+        if (!movieSet.has(t.name)) t.category = cats[t.name] || 'other';
+      }
+      const strip = n => n.replace(/^(the|a|an)\s+/i, '').toLowerCase();
+      const nonMoviesSorted = [...nonMovieNames].sort((a, b) => strip(a).localeCompare(strip(b)));
+      state.torrentOrder = [...movieNames, ...nonMoviesSorted];
+      renderTorrents();
+    }
+  } catch(e) {
+    state.torrentOrder = state.torrents.map(t => t.name);
+    renderTorrents();
+  }
+  stopChomper();
+}
+
+const GROUP_ORDER = ['movie', 'tv', 'concert', 'music', 'software', 'other'];
+const GROUP_LABEL = { movie: 'Movies', tv: 'TV Shows', concert: 'Concerts', music: 'Music', software: 'Software', other: 'Other' };
+
+function renderTorrents() {
+  const list = document.getElementById('torrents-list');
+  if (!state.torrents.length) {
+    list.innerHTML = '<div class="queue-empty">No items found</div>';
+    renderSelectBar();
+    return;
+  }
+  if (state.torrentOrder === null) {
+    list.innerHTML = '';
+    renderSelectBar();
+    return;
+  }
+
+  const ordered = state.torrentOrder.map(name => state.torrentsByName[name]).filter(Boolean);
+
+  // Group by category, sorted alphabetically within each group
+  const groups = {};
+  for (const t of ordered) {
+    const cat = t.category || 'other';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(t);
+  }
+  for (const cat of GROUP_ORDER) {
+    if (groups[cat]) groups[cat].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  let html = '';
+  for (const cat of GROUP_ORDER) {
+    const items = groups[cat];
+    if (!items || !items.length) continue;
+    const isOpen = state.groupsOpen[cat] !== false;
+    html += `
+    <div class="torrent-group-header" onclick="toggleGroup('${cat}')">
+      <span class="group-label">${GROUP_LABEL[cat]}</span>
+      <span class="group-count">${items.length}</span>
+      <span class="group-chevron">${isOpen ? '▾' : '▸'}</span>
+    </div>
+    <div id="tgroup-${cat}" style="${isOpen ? '' : 'display:none'}">`;
+
+    for (const t of items) {
+      const pid = pathId(t.path);
+      const sizeText = t.size_gb != null ? `${t.size_gb} GB` : '<span style="color:#333">…</span>';
+      const isSelected = state.selected.has(t.name);
+      const nameDim = cat !== 'movie' ? ' style="opacity:0.45"' : '';
+      const btn = cat === 'movie'
+        ? `<button class="btn primary xs" onclick="startInspect('${esc(t.path)}')">Inspect</button>
+           <select class="move-select" onchange="changeCategoryOf('${esc(t.name)}', this.value); this.value=''">
+             <option value="">Move to…</option>
+             <option value="tv">TV Shows</option>
+             <option value="concert">Concert</option>
+             <option value="music">Music</option>
+             <option value="software">Software</option>
+             <option value="other">Other</option>
+           </select>`
+        : `<button class="btn secondary xs" onclick="promoteToMovie('${esc(t.name)}')">-> Movie</button>`;
+      html += `
+      <div class="torrent-item${isSelected ? ' t-selected' : ''}">
+        <input type="checkbox" class="torrent-check" ${isSelected ? 'checked' : ''}
+               onchange="toggleSelect(${JSON.stringify(t.name)})">
+        <span class="torrent-name"${nameDim} title="${esc(t.path)}">${esc(t.name)}</span>
+        <span class="torrent-size" id="tsize-${pid}">${sizeText}</span>
+        ${btn}
+      </div>`;
+      const insp = state.inspections[t.path];
+      if (insp) html += `<div class="inline-inspect">${renderInspectCard(insp)}</div>`;
+    }
+    html += '</div>';
+  }
+
+  list.innerHTML = html || '<div class="queue-empty">No items found</div>';
+  _attachInspectListeners();
+  renderSelectBar();
+}
+
+function toggleGroup(cat) {
+  state.groupsOpen[cat] = !state.groupsOpen[cat];
+  const el = document.getElementById(`tgroup-${cat}`);
+  const header = el && el.previousElementSibling;
+  if (el) el.style.display = state.groupsOpen[cat] ? '' : 'none';
+  if (header) header.querySelector('.group-chevron').textContent = state.groupsOpen[cat] ? '▾' : '▸';
+}
+
+function toggleSelect(name) {
+  if (state.selected.has(name)) state.selected.delete(name);
+  else state.selected.add(name);
+  renderSelectBar();
+  // Update just the row highlight without full re-render
+  const t = state.torrentsByName[name];
+  if (t) {
+    const pid = pathId(t.path);
+    const row = document.querySelector(`#tsize-${pid}`)?.closest('.torrent-item');
+    if (row) row.className = 'torrent-item' + (state.selected.has(name) ? ' t-selected' : '');
+  }
+}
+
+function clearSelection() {
+  state.selected.clear();
+  renderTorrents();
+}
+
+function changeCategoryOf(name, cat) {
+  if (!cat) return;
+  const t = state.torrentsByName[name];
+  if (!t) return;
+  t.category = cat;
+  renderTorrents();
+}
+
+function promoteToMovie(name) {
+  changeCategoryOf(name, 'movie');
+}
+
+function inspectSelected() {
+  const toInspect = [...state.selected].map(name => state.torrentsByName[name]).filter(Boolean);
+  state.selected.clear();
+  renderSelectBar();
+  for (const t of toInspect) startInspect(t.path);
+}
+
+function renderSelectBar() {
+  const bar = document.getElementById('select-bar');
+  const count = document.getElementById('select-count');
+  if (!bar) return;
+  if (state.selected.size === 0) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = '';
+    count.textContent = `${state.selected.size} selected`;
+  }
+}
+
+async function loadTorrentSizes() {
+  // 3 parallel workers — each updates its size cell in-place, never re-renders the list
+  let idx = 0;
+  async function worker() {
+    while (true) {
+      const i = idx++;
+      if (i >= state.torrents.length) return;
+      const t = state.torrents[i];
+      try {
+        const r = await fetch(`/api/torrent-size?path=${encodeURIComponent(t.path)}`);
+        const data = await r.json();
+        t.size_gb = data.size_gb;
+        const el = document.getElementById('tsize-' + pathId(t.path));
+        if (el) el.innerHTML = data.size_gb != null ? `${data.size_gb} GB` : '';
+      } catch {}
+    }
+  }
+  await Promise.all([worker(), worker(), worker()]);
+}
+
+async function browse() {
+  const r = await fetch('/api/browse', { method: 'POST' });
+  const data = await r.json();
+  if (data.path) {
+    document.getElementById('custom-path').value = data.path;
+  }
+}
+
+// ── Inspect flow ───────────────────────────────────────────────────────────
+
+function inspectCustom() {
+  const path = document.getElementById('custom-path').value.trim();
+  if (!path) return;
+  startInspect(path);
+  document.getElementById('custom-path').value = '';
+}
+
+async function startInspect(path) {
+  if (state.inspections[path]) return; // already inspecting
+
+  state.inspections[path] = { state: 'inspecting', path };
+  _renderInspectViews();
+
+  const r = await fetch('/api/inspect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  const data = await r.json();
+
+  if (data.error) {
+    state.inspections[path] = { state: 'error', path, error: data.error };
+  } else {
+    state.inspections[path] = {
+      state: 'review',
+      path,
+      result: data,
+      edits: {
+        title: data.title,
+        year: data.year,
+        audio: data.audio.map(a => ({ ...a })),
+        subtitles: data.subtitles.map(s => ({ ...s })),
+      },
+    };
+  }
+  _renderInspectViews();
+}
+
+function cancelInspect(path) {
+  delete state.inspections[path];
+  _renderInspectViews();
+}
+
+async function addToQueue(path) {
+  const insp = state.inspections[path];
+  if (!insp || insp.state !== 'review') return;
+
+  const edits = insp.edits;
+  const r = await fetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path,
+      title:      edits.title,
+      year:       parseInt(edits.year) || null,
+      resolution: insp.result.resolution,
+      audio:      edits.audio,
+      subtitles:  edits.subtitles,
+    }),
+  });
+  await r.json();
+  delete state.inspections[path];
+  _renderInspectViews();
+}
+
+// ── Render inspect cards ───────────────────────────────────────────────────
+
+function _renderInspectViews() {
+  // Inline cards live inside renderTorrents(); custom-path cards go in #inspect-cards
+  renderTorrents();
+  renderInspectCards();
+}
+
+function _attachInspectListeners() {
+  for (const insp of Object.values(state.inspections)) {
+    if (insp.state !== 'review') continue;
+    const path = insp.path;
+    const pid = pathId(path);
+    const titleEl = document.getElementById(`title-${pid}`);
+    if (titleEl) titleEl.addEventListener('input', e => {
+      state.inspections[path].edits.title = e.target.value;
+      updateOutputPreview(path);
+    });
+    const yearEl = document.getElementById(`year-${pid}`);
+    if (yearEl) yearEl.addEventListener('input', e => {
+      state.inspections[path].edits.year = e.target.value;
+      updateOutputPreview(path);
+    });
+  }
+}
+
+function renderInspectCards() {
+  // Only render inspections for paths NOT in the torrent list (custom paths from the Add Movie box)
+  const container = document.getElementById('inspect-cards');
+  const torrentPaths = new Set(state.torrents.map(t => t.path));
+  const cards = Object.values(state.inspections).filter(insp => !torrentPaths.has(insp.path));
+  if (!cards.length) { container.innerHTML = ''; return; }
+  container.innerHTML = cards.map(insp => renderInspectCard(insp)).join('');
+  _attachInspectListeners();
+}
+
+function renderInspectCard(insp) {
+  const pid = pathId(insp.path);
+  const name = insp.path.split('/').pop();
+
+  if (insp.state === 'inspecting') {
+    return `
+    <div class="inspect-panel">
+      <div class="inspect-header">
+        <span class="inspect-title">${esc(name)}</span>
+        <span class="inspect-status"><span class="spinner"></span> Inspecting…</span>
+      </div>
+    </div>`;
+  }
+
+  if (insp.state === 'error') {
+    return `
+    <div class="inspect-panel" style="border-color:#c0392b">
+      <div class="inspect-header" style="background:rgba(192,57,43,0.08)">
+        <span class="inspect-title" style="color:#c0392b">${esc(name)}</span>
+        <button class="btn secondary sm" onclick="cancelInspect('${esc(insp.path)}')">Dismiss</button>
+      </div>
+      <div class="inspect-body">
+        <div style="color:#c0392b;font-size:12px">${esc(insp.error)}</div>
+      </div>
+    </div>`;
+  }
+
+  const { result, edits } = insp;
+  const v = result.video;
+
+  const audioRows = edits.audio.map((a, i) => {
+    const chanLabel = a.channels === 8 ? '7.1' : a.channels === 6 ? '5.1' : a.channels === 2 ? '2.0' : `${a.channels}ch`;
+    const codecLabel = a.codec.toUpperCase();
+    const atmosBadge = a.has_atmos ? '<span class="atmos-badge">Atmos</span>' : '';
+    const actionClass = a.action === 'encode' ? 'encode' : a.action === 'exclude' ? 'exclude' : '';
+    return `
+      <div class="stream-row">
+        <div class="stream-num">${i + 1}</div>
+        <div class="stream-codec">${esc(codecLabel)}</div>
+        <div class="stream-ch">${chanLabel}</div>
+        ${atmosBadge}
+        <select class="stream-select" onchange="setAudioLang('${esc(insp.path)}',${i},this.value)">
+          ${langOptions(a.language)}
+        </select>
+        <select class="stream-action-select ${actionClass}" onchange="setAudioAction('${esc(insp.path)}',${i},this.value)">
+          <option value="copy"    ${a.action==='copy'?'selected':''}>Copy</option>
+          <option value="encode"  ${a.action==='encode'?'selected':''}>Encode -> AC3</option>
+          <option value="exclude" ${a.action==='exclude'?'selected':''}>Exclude</option>
+        </select>
+      </div>`;
+  }).join('');
+
+  const subRows = edits.subtitles.map((s, i) => `
+    <div class="stream-row">
+      <div class="stream-num">${i + 1}</div>
+      <div class="stream-codec">${esc(s.codec.toUpperCase())}</div>
+      <div class="stream-ch"></div>
+      <select class="stream-select" onchange="setSubLang('${esc(insp.path)}',${i},this.value)">
+        ${langOptions(s.language)}
+      </select>
+      <label class="sub-include">
+        <input type="checkbox" ${s.include?'checked':''} onchange="setSubInclude('${esc(insp.path)}',${i},this.checked)"> Include
+      </label>
+    </div>`).join('');
+
+  const outputName = computeOutputName(edits, result);
+
+  return `
+  <div class="inspect-panel" id="inspect-${pid}">
+    <div class="inspect-header">
+      <span class="inspect-title">Review — ${esc(name)}</span>
+      <span class="inspect-status">${result.duration_secs ? fmtDuration(result.duration_secs) : ''} · ${fmtSize(result.size_bytes)}</span>
+    </div>
+    <div class="inspect-body">
+
+      <div class="field-row">
+        <span class="field-label">Title</span>
+        <input type="text" class="field-input" id="title-${pid}" value="${esc(edits.title || '')}">
+      </div>
+      <div class="field-row">
+        <span class="field-label">Year</span>
+        <input type="text" class="field-input" id="year-${pid}" value="${esc(String(edits.year || ''))}" style="width:70px;flex:none">
+        <span class="field-label" style="width:auto;padding-left:10px">Video</span>
+        <span class="field-value">${esc(v.codec.toUpperCase())} ${v.resolution} · ${v.fps} fps · ${v.bit_depth}-bit</span>
+      </div>
+
+      ${edits.audio.length ? `<div class="section-divider">Audio</div><div class="stream-table">${audioRows}</div>` : ''}
+      ${edits.subtitles.length ? `<div class="section-divider">Subtitles</div><div class="stream-table">${subRows}</div>` : ''}
+
+      <div class="section-divider">Output</div>
+      <div class="output-preview" id="output-preview-${pid}">
+        <strong>${esc(outputName)}</strong>
+      </div>
+    </div>
+    <div class="inspect-footer">
+      <button class="btn secondary" onclick="cancelInspect('${esc(insp.path)}')">Cancel</button>
+      <button class="btn green" onclick="addToQueue('${esc(insp.path)}')">Add to Queue -></button>
+    </div>
+  </div>`;
+}
+
+function setAudioLang(path, idx, value) {
+  state.inspections[path].edits.audio[idx].language = value;
+  updateOutputPreview(path);
+}
+function setAudioAction(path, idx, value) {
+  const a = state.inspections[path].edits.audio[idx];
+  a.action = value;
+  // Update select element class for color coding
+  const pid = pathId(path);
+  const card = document.getElementById(`inspect-${pid}`);
+  if (card) {
+    const selects = card.querySelectorAll('.stream-action-select');
+    if (selects[idx]) {
+      selects[idx].className = 'stream-action-select ' + (value === 'encode' ? 'encode' : value === 'exclude' ? 'exclude' : '');
+    }
+  }
+  updateOutputPreview(path);
+}
+function setSubLang(path, idx, value) {
+  state.inspections[path].edits.subtitles[idx].language = value;
+}
+function setSubInclude(path, idx, checked) {
+  state.inspections[path].edits.subtitles[idx].include = checked;
+}
+
+function updateOutputPreview(path) {
+  const insp = state.inspections[path];
+  if (!insp || insp.state !== 'review') return;
+  const pid = pathId(path);
+  const el = document.getElementById(`output-preview-${pid}`);
+  if (el) el.innerHTML = `<strong>${esc(computeOutputName(insp.edits, insp.result))}</strong>`;
+}
+
+function computeOutputName(edits, result) {
+  const title = edits.title || '';
+  const year  = edits.year ? ` (${edits.year})` : '';
+  const res   = result.resolution ? ` [${result.resolution}]` : '';
+
+  let suffix = '';
+  for (const a of edits.audio) {
+    if (a.action === 'exclude') continue;
+    const c = a.codec.toLowerCase();
+    const atmos = a.has_atmos;
+    if (c === 'truehd' || c === 'mlp') { suffix = atmos ? ' TrueHD Atmos' : ' TrueHD'; break; }
+    if (c === 'eac3')                   { suffix = atmos ? ' EAC3 Atmos'   : ' EAC3';   break; }
+    if (c === 'dts' || c === 'dca')     { suffix = ' DTS'; break; }
+    if (c === 'ac3' || a.action === 'encode') { suffix = ' AC3'; break; }
+  }
+  return `${title}${year}${res}${suffix}`;
+}
+
+// ── Queue rendering ────────────────────────────────────────────────────────
+
+function renderQueue() {
+  const queued = state.jobOrder.filter(id => state.jobs[id]?.phase === 'queued');
+  const emptyEl = document.getElementById('queue-empty');
+  const listEl  = document.getElementById('queue-list');
+  const titleEl = document.getElementById('queue-title');
+
+  titleEl.textContent = queued.length ? `Queue — ${queued.length} job${queued.length>1?'s':''}` : 'Queue';
+
+  if (!queued.length) {
+    listEl.innerHTML = '<div class="queue-empty" id="queue-empty">Queue is empty — add movies above</div>';
+  } else {
+    listEl.innerHTML = queued.map((id, i) => {
+      const j = state.jobs[id];
+      return `
+      <div class="queue-item">
+        <div class="queue-num">${i + 1}</div>
+        <div class="queue-info">
+          <div class="queue-name">${esc(j.output_name || j.title)}</div>
+        </div>
+        <button class="queue-remove" onclick="removeJob('${id}')" title="Remove">×</button>
+      </div>`;
+    }).join('');
+  }
+
+  renderStartBtn();
+}
+
+function renderStartBtn() {
+  const btn = document.getElementById('start-btn');
+  const queued = state.jobOrder.filter(id => state.jobs[id]?.phase === 'queued');
+  if (state.queueRunning) {
+    btn.textContent = '⏹ Stop after current';
+    btn.className = 'btn red';
+    btn.onclick = stopQueue;
+  } else {
+    btn.textContent = '▶ Start Queue';
+    btn.className = 'btn green';
+    btn.onclick = startQueue;
+    btn.disabled = queued.length === 0;
+  }
+}
+
+// ── Active job ─────────────────────────────────────────────────────────────
+
+function renderActive() {
+  const active = state.jobOrder.map(id => state.jobs[id]).find(j => j?.phase === 'encoding');
+  const panel  = document.getElementById('active-panel');
+
+  if (!active) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  document.getElementById('active-name').textContent = active.output_name || active.title;
+  document.getElementById('active-elapsed').textContent = active.elapsed || '—';
+  document.getElementById('active-eta').textContent = active.eta ? `ETA: ~${active.eta}` : '';
+
+  const stageOrder = [
+    { key: 'probe',     label: 'Probe'    },
+    { key: 'crf_probe', label: 'CRF Tune' },
+    { key: 'encode',    label: 'Encode'   },
+  ];
+
+  const body = document.getElementById('active-body');
+  body.innerHTML = stageOrder.map(({ key, label }) => {
+    const s = active.stages[key] || {};
+    const pct   = s.pct || 0;
+    const status = s.status || 'waiting';
+    const barClass = status === 'done' ? 'done' : status === 'error' ? 'error' : '';
+    const barPct   = status === 'waiting' ? 0 : pct;
+    const statusText = stageStatusText(s, key);
+    return `
+    <div class="progress-row">
+      <span class="progress-label">${label}</span>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar ${barClass}" style="width:${barPct}%"></div>
+      </div>
+      <span class="progress-status ${status}">${statusText}</span>
+    </div>`;
+  }).join('');
+}
+
+function stageStatusText(s, key) {
+  const status = s.status || 'waiting';
+  if (status === 'waiting') return 'waiting';
+  if (status === 'skipped') return 'skipped';
+  if (status === 'error')   return s.label || 'error';
+  if (status === 'done') {
+    const label = s.label ? ` · ${s.label}` : '';
+    return `done${label}`;
+  }
+  // active
+  if (key === 'encode') {
+    const eta = s.eta ? ` ETA ${s.eta}` : '';
+    return `${s.pct}%${eta}`;
+  }
+  return s.label || `${s.pct}%`;
+}
+
+// ── Completed ──────────────────────────────────────────────────────────────
+
+function renderCompleted() {
+  const done = state.jobOrder.map(id => state.jobs[id]).filter(j => j && (j.phase === 'done' || j.phase === 'error'));
+  const panel = document.getElementById('completed-panel');
+  if (!done.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  document.getElementById('completed-list').innerHTML = done.reverse().map(j => {
+    if (j.phase === 'error') {
+      return `
+      <div class="completed-item">
+        <span class="error-icon">✗</span>
+        <div class="completed-info">
+          <div class="completed-name">${esc(j.output_name || j.title)}</div>
+          <div class="completed-meta" style="color:#c0392b">${esc(j.error)}</div>
+        </div>
+        <button class="btn secondary xs" onclick="requeueJob('${j.id}')">Retry</button>
+      </div>`;
+    }
+    const sizeStr = j.output_size_mb ? `${j.output_size_mb} MB` : '';
+    return `
+    <div class="completed-item">
+      <span class="check-icon">✓</span>
+      <div class="completed-info">
+        <div class="completed-name">${esc(j.output_name)}</div>
+        <div class="completed-meta">${esc(j.elapsed)} ${sizeStr ? '· ' + sizeStr : ''}</div>
+      </div>
+      <button class="btn secondary sm" onclick="reveal('${j.id}')">Show in Finder</button>
+    </div>`;
+  }).join('');
+}
+
+// ── API calls ──────────────────────────────────────────────────────────────
+
+async function removeJob(id) {
+  await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+}
+
+async function requeueJob(id) {
+  const j = state.jobs[id];
+  if (!j) return;
+  await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+  await fetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: j.path, title: j.title }),
+  });
+}
+
+async function startQueue() {
+  state.queueRunning = true;
+  renderStartBtn();
+  await fetch('/api/queue/start', { method: 'POST' });
+}
+
+async function stopQueue() {
+  await fetch('/api/queue/stop', { method: 'POST' });
+}
+
+async function reveal(id) {
+  await fetch(`/api/reveal/${id}`, { method: 'POST' });
+}
+
+// ── Panel collapse ─────────────────────────────────────────────────────────
+
+const _panelOpen = { torrents: true };
+
+function togglePanel(key) {
+  _panelOpen[key] = !_panelOpen[key];
+  const body    = document.getElementById(`body-${key}`);
+  const chevron = document.getElementById(`chevron-${key}`);
+  body.style.display = _panelOpen[key] ? '' : 'none';
+  chevron.className = `chevron ${_panelOpen[key] ? 'open' : ''}`;
+}
+
+// ── Dry run toggle ─────────────────────────────────────────────────────────
+
+document.getElementById('dryrun').addEventListener('change', function () {
+  document.getElementById('dryruntoggle').className = 'toggle-label' + (this.checked ? ' active' : '');
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function pathId(path) {
+  let h = 0;
+  for (let i = 0; i < path.length; i++) {
+    h = (Math.imul(31, h) + path.charCodeAt(i)) | 0;
+  }
+  return 'p' + Math.abs(h).toString(36);
+}
+
+const LANGS = [
+  ['eng','English'],['rus','Russian'],['ukr','Ukrainian'],['fra','French'],
+  ['deu','German'],['spa','Spanish'],['ita','Italian'],['jpn','Japanese'],
+  ['kor','Korean'],['zho','Chinese'],['por','Portuguese'],['und','Unknown'],['','—'],
+];
+
+function langOptions(selected) {
+  const known = LANGS.map(([v, l]) => v);
+  const all = [...LANGS];
+  if (selected && !known.includes(selected)) all.push([selected, selected.toUpperCase()]);
+  return all.map(([v, l]) => `<option value="${v}" ${v===selected?'selected':''}>${l}</option>`).join('');
+}
+
+function fmtDuration(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  const gb = bytes / 1e9;
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes/1e6).toFixed(0)} MB`;
+}
+
+// ── AI chomper animation ───────────────────────────────────────────────────
+
+const _CHOMP_N = 28;
+const _CHOMP_FRAMES = (() => {
+  const frames = [];
+  for (let i = 0; i < _CHOMP_N; i++) {
+    frames.push('·'.repeat(i) + 'ᗧ' + '·'.repeat(_CHOMP_N - i - 1));
+  }
+  return frames;
+})();
+let _chompTimer = null;
+let _sortTimerStart = null;
+let _sortTimerInterval = null;
+
+function startSortTimer() {
+  _sortTimerStart = Date.now();
+  const el = document.getElementById('sort-timer');
+  if (el) el.textContent = '0.0s';
+  _sortTimerInterval = setInterval(() => {
+    const el = document.getElementById('sort-timer');
+    if (el) el.textContent = ((Date.now() - _sortTimerStart) / 1000).toFixed(1) + 's';
+  }, 100);
+}
+
+function stopSortTimer() {
+  clearInterval(_sortTimerInterval);
+  _sortTimerInterval = null;
+}
+
+function _renderChompFrame(frame) {
+  const el = document.getElementById('ai-chomper');
+  if (!el) return;
+  const pos = frame.indexOf('ᗧ');
+  el.innerHTML = frame.split('').map((c, i) => {
+    if (c === 'ᗧ') return `<span style="color:#5b8af5">${c}</span>`;
+    return `<span style="color:${i < pos ? '#1e2030' : '#2d3a5a'}">${c}</span>`;
+  }).join('');
+}
+
+function startChomper() {
+  const bar = document.getElementById('ai-status');
+  if (!bar) return;
+  bar.style.visibility = 'visible';
+  let i = 0;
+  _renderChompFrame(_CHOMP_FRAMES[0]);
+  _chompTimer = setInterval(() => {
+    _renderChompFrame(_CHOMP_FRAMES[i++ % _CHOMP_FRAMES.length]);
+  }, 120);
+}
+
+function stopChomper() {
+  clearInterval(_chompTimer);
+  _chompTimer = null;
+  stopSortTimer();
+  const bar = document.getElementById('ai-status');
+  if (bar) bar.style.visibility = 'hidden';
+  const thinkEl = document.getElementById('ai-thinking');
+  if (thinkEl) { thinkEl.style.display = 'none'; thinkEl.textContent = ''; }
+  const searchEl = document.getElementById('ai-search-query');
+  if (searchEl) { searchEl.style.display = 'none'; searchEl.textContent = ''; }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+connectWS();
+loadTorrents();
+</script>
+</body>
+</html>

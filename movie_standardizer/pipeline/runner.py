@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .job import Job
 from ..ai.name_parser import ContentSkipped, MovieInfo, parse
-from ..media.audio import select_audio_tracks
+from ..media.audio import apply_audio_overrides, select_audio_tracks
 from ..media.encoder import encode
 from ..media.streams import analyze
 from .. import config
@@ -29,11 +29,23 @@ _VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".ts"}
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def run(source: Path, dry_run: bool = False) -> bool:
+def run(
+    source:         Path,
+    dry_run:        bool = False,
+    on_progress=None,
+    user_overrides: dict | None = None,
+) -> bool:
     """Process one source path (folder or file) through the full pipeline.
+
+    user_overrides (from the web UI review step) may contain:
+      title, year, resolution, audio (list of override dicts), subtitles (list of override dicts)
 
     Returns True on success, False on failure or skip.
     """
+    def emit(stage: str, pct: float, message: str = "", eta: str = "") -> None:
+        if on_progress:
+            on_progress(stage=stage, pct=pct, message=message, eta=eta)
+
     print(f"\nSource: {source.name}")
 
     # Stage 1: locate video file
@@ -42,16 +54,30 @@ def run(source: Path, dry_run: bool = False) -> bool:
         print("  SKIP: no video file found")
         return False
 
-    # Stage 2: parse name with AI
-    print("  Parsing name ...")
-    try:
-        movie_info = parse(source)
-    except ContentSkipped as e:
-        print(f"  SKIP: {e.reason}")
-        return False
-    except Exception as e:
-        print(f"  ERROR parsing name: {e}")
-        return False
+    # Stage 2: parse name — skip if title already provided via overrides
+    overrides = user_overrides or {}
+    if overrides.get("title"):
+        movie_info = MovieInfo(
+            title      = overrides["title"],
+            year       = overrides.get("year"),
+            resolution = overrides.get("resolution"),
+            raw_name   = source.name,
+        )
+        print(f"  Title (override): {movie_info.title} ({movie_info.year})")
+    else:
+        print("  Parsing name ...")
+        emit("name", 0.0, "Parsing name...")
+        try:
+            movie_info = parse(source)
+        except ContentSkipped as e:
+            print(f"  SKIP: {e.reason}")
+            emit("name", -1.0, f"SKIP: {e.reason}")
+            return False
+        except Exception as e:
+            print(f"  ERROR parsing name: {e}")
+            emit("name", -1.0, f"ERROR: {e}")
+            return False
+        emit("name", 1.0, f"{movie_info.title} ({movie_info.year})")
 
     print(f"  Title:      {movie_info.title}")
     print(f"  Year:       {movie_info.year or '(unknown)'}")
@@ -59,12 +85,15 @@ def run(source: Path, dry_run: bool = False) -> bool:
 
     # Stage 3: probe streams
     print("  Probing streams ...")
+    emit("probe", 0.0, "Probing streams...")
     try:
         probe_result = analyze(video_file)
     except Exception as e:
         print(f"  ERROR probing {video_file.name}: {e}")
+        emit("probe", -1.0, f"ERROR: {e}")
         return False
 
+    emit("probe", 1.0, f"{probe_result.video.codec.upper()} {probe_result.resolution}")
     print(f"  Video:  {probe_result.video.codec} {probe_result.resolution} "
           f"{probe_result.video.fps}fps {probe_result.video.bit_depth}bit")
     for a in probe_result.audio:
@@ -72,8 +101,12 @@ def run(source: Path, dry_run: bool = False) -> bool:
               f"title={a.title!r}  -> {a.action}")
     print(f"  Subs:   {len(probe_result.subtitles)} track(s)")
 
-    # Stage 4: select audio tracks
-    audio_tracks = select_audio_tracks(probe_result)
+    # Stage 4: select audio tracks (with user overrides if provided)
+    audio_overrides = overrides.get("audio")
+    if audio_overrides:
+        audio_tracks = apply_audio_overrides(probe_result, audio_overrides)
+    else:
+        audio_tracks = select_audio_tracks(probe_result)
 
     print("  Audio output plan:")
     for t in audio_tracks:
@@ -81,6 +114,8 @@ def run(source: Path, dry_run: bool = False) -> bool:
         if t.bitrate_arg:
             action += f" {t.bitrate_arg}"
         print(f"    [{t.source_index}] {action} lang={t.language!r} title={t.title!r}")
+
+    subtitle_overrides = overrides.get("subtitles")
 
     # Stage 5: build job and show output path
     job = Job(
@@ -96,7 +131,8 @@ def run(source: Path, dry_run: bool = False) -> bool:
 
     if dry_run:
         print("  [dry-run] encode command:")
-        encode(probe_result, audio_tracks, job.output_file, dry_run=True)
+        encode(probe_result, audio_tracks, job.output_file, dry_run=True,
+               subtitle_overrides=subtitle_overrides)
         return True
 
     # Check output doesn't already exist
@@ -106,7 +142,13 @@ def run(source: Path, dry_run: bool = False) -> bool:
 
     # Stage 6: encode
     print()
-    success = encode(probe_result, audio_tracks, job.output_file)
+    success = encode(
+        probe_result,
+        audio_tracks,
+        job.output_file,
+        on_progress=on_progress,
+        subtitle_overrides=subtitle_overrides,
+    )
 
     if not success:
         return False
