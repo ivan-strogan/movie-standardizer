@@ -1023,8 +1023,10 @@ def _fmt_time(secs: float) -> str:
     h, rem = divmod(secs, 3600)
     m, s   = divmod(rem, 60)
     if h:
-        return f"{h}h{m:02d}m{s:02d}s"
-    return f"{m:02d}m{s:02d}s"
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
