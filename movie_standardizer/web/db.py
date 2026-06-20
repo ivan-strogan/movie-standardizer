@@ -111,6 +111,45 @@ def set_many(entries: dict[str, str], manual: bool = False) -> None:
         conn.close()
 
 
+def reset_auto() -> int:
+    """Delete all auto-classified entries (manual=0). Returns count deleted.
+
+    Manual overrides (manual=1) are preserved so user corrections survive the reset.
+    """
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM classifications WHERE manual = 0")
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def reset_auto() -> int:
+    """Delete all auto-classified entries (manual=0). Returns count deleted.
+
+    Manual overrides (manual=1) are preserved so user corrections survive the reset.
+    """
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM classifications WHERE manual = 0")
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def reset_all() -> int:
+    """Truncate the entire classifications table. Returns count deleted."""
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM classifications")
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 # Upsert rule:
 #   - If the existing row is manual=1, keep its category (user override wins).
 #   - If the incoming row is manual=1, store it and set manual=1 (user is overriding).
