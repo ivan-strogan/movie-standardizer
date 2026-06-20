@@ -1396,13 +1396,22 @@ let _chompTimer = null;
 let _sortTimerStart = null;
 let _sortTimerInterval = null;
 
+function _fmtElapsed(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h) return `${h}h ${String(m).padStart(2,'0')}m`;
+  if (m) return `${m}m ${s.toFixed(0).padStart(2,'0')}s`;
+  return `${s.toFixed(1)}s`;
+}
+
 function startSortTimer() {
   _sortTimerStart = Date.now();
   const el = document.getElementById('sort-timer');
   if (el) el.textContent = '0.0s';
   _sortTimerInterval = setInterval(() => {
     const el = document.getElementById('sort-timer');
-    if (el) el.textContent = ((Date.now() - _sortTimerStart) / 1000).toFixed(1) + 's';
+    if (el) el.textContent = _fmtElapsed((Date.now() - _sortTimerStart) / 1000);
   }, 100);
 }
 
