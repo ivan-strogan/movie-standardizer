@@ -476,6 +476,7 @@ body {
   <div class="titlebar">
     <div class="titlebar-title">🎬 Movie Standardizer</div>
     <div class="db-status" id="db-status"><span class="db-dot"></span><span id="db-status-text">DB ...</span></div>
+    <button class="btn secondary xs" onclick="rescanDb()" style="font-size:11px">Rescan</button>
     <label class="toggle-label" id="dryruntoggle">
       <input type="checkbox" id="dryrun"> Dry run
     </label>
@@ -1448,6 +1449,20 @@ function stopChomper() {
 connectWS();
 loadTorrents();
 loadDbStatus();
+
+async function rescanDb() {
+  if (!confirm('Clear cached classifications and re-run AI?\nManual overrides will be kept.')) return;
+  const doFull = confirm('Also clear manual overrides?\n\nOK = wipe everything\nCancel = keep manual overrides');
+  const r = await fetch('/api/db/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({full: doFull}),
+  });
+  const d = await r.json();
+  if (!d.ok) { alert('Reset failed'); return; }
+  await loadTorrents();
+  classifyTorrents();
+}
 
 async function loadDbStatus() {
   const badge = document.getElementById('db-status');

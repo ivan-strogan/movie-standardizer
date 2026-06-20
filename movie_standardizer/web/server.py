@@ -237,6 +237,13 @@ async def db_status() -> dict:
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/db/reset")
+async def db_reset(body: dict) -> dict:
+    full = bool(body.get("full", False))
+    deleted = _db.reset_all() if full else _db.reset_auto()
+    return {"ok": True, "deleted": deleted}
+
+
 @app.get("/api/torrent-size")
 async def torrent_size(path: str) -> dict:
     p = Path(path)
