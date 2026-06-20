@@ -7,6 +7,7 @@ Opens http://localhost:8080 automatically.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import threading
 import time
@@ -24,6 +25,7 @@ from ..media.audio import select_audio_tracks
 from ..media.streams import analyze
 from ..pipeline.runner import _find_video, run as pipeline_run
 from .. import config
+from . import db as _db
 
 app = FastAPI()
 
@@ -59,6 +61,7 @@ _LANG_NAMES = {
 async def _startup() -> None:
     global _loop
     _loop = asyncio.get_running_loop()
+    _db.init_db()
 
 
 # ── Static files + index ──────────────────────────────────────────────────────
@@ -76,41 +79,162 @@ async def list_torrents() -> dict:
     if not base.exists():
         return {"error": f"TORRENTS_DIR not found: {base}", "items": []}
 
+    cached = _db.get_all()
+
     items = []
     for p in sorted(base.iterdir()):
         name = p.name
-        if name.startswith(".") or name.startswith("__") or name.endswith(config.SOURCE_DONE_SUFFIX):
+        if name.startswith(".") or name.startswith("__"):
+            continue
+        cached_entry = cached.get(name)
+        if _is_done(name):
+            items.append({
+                "name":     name,
+                "path":     str(p),
+                "size_gb":  cached_entry["size_gb"] if cached_entry else None,
+                "category": "done",
+                "cached":   cached_entry is not None,
+                "original": _undone_name(name),
+            })
             continue
         items.append({
             "name":     name,
             "path":     str(p),
-            "size_gb":  None,
-            "category": _categorize(name),
+            "size_gb":  cached_entry["size_gb"] if cached_entry else None,
+            "category": cached_entry["category"] if cached_entry else _categorize(name),
+            "cached":   cached_entry is not None,
         })
 
     return {"items": items}
+
+
+def _is_done(name: str) -> bool:
+    suf = config.SOURCE_DONE_SUFFIX
+    if name.endswith(suf):  # folder: Some.Folder_done
+        return True
+    p = Path(name)          # file: title_done.mkv
+    return bool(p.suffix) and p.stem.endswith(suf)
+
+
+def _undone_name(name: str) -> str:
+    suf = config.SOURCE_DONE_SUFFIX
+    if name.endswith(suf):  # folder
+        return name[:-len(suf)]
+    p = Path(name)          # file
+    return p.stem[:-len(suf)] + p.suffix
 
 
 # ── REST: Native folder picker ────────────────────────────────────────────────
 
 @app.post("/api/torrents/classify")
 async def classify_torrents(body: dict) -> dict:
-    """Call 1: identify movies. Returns sorted movie names + thinking text."""
+    """Call 1: identify movies. Names already in the DB are returned from cache;
+    only new/unknown names are sent to AI. New results are saved to DB."""
     names = body.get("names", [])
     if not names:
         return {"movies": [], "thinking": ""}
-    movies, thinking = await asyncio.get_event_loop().run_in_executor(None, _classify_movies, names)
-    return {"movies": movies, "thinking": thinking}
+
+    cached        = _db.get_all()
+    cached_movies = [n for n in names if cached.get(n, {}).get("category") == "movie"]
+    uncached      = [n for n in names if n not in cached]
+
+    new_movies: list[str] = []
+    thinking = ""
+    if uncached:
+        new_movies, thinking = await asyncio.get_event_loop().run_in_executor(
+            None, _classify_movies, uncached
+        )
+        new_not_movies = [n for n in uncached if n not in new_movies]
+        _db.set_many({n: "movie"     for n in new_movies})
+        _db.set_many({n: "not_movie" for n in new_not_movies})
+
+    return {"movies": cached_movies + new_movies, "thinking": thinking}
 
 
 @app.post("/api/torrents/classify-others")
 async def classify_others_endpoint(body: dict) -> dict:
-    """Call 2: categorize non-movie items."""
+    """Categorize non-movie items. Returns cached results for known names;
+    only new/unknown names are sent to AI. New results are saved to DB."""
     names = body.get("names", [])
     if not names:
         return {"categories": {}}
-    categories = await asyncio.get_event_loop().run_in_executor(None, _classify_others, names)
-    return {"categories": categories}
+
+    cached = _db.get_all()
+    cached_cats = {
+        n: cached[n]["category"]
+        for n in names
+        if n in cached and cached[n]["category"] not in ("movie", "not_movie")
+    }
+    uncached = [n for n in names if n not in cached or cached[n]["category"] == "not_movie"]
+
+    new_cats: dict[str, str] = {}
+    if uncached:
+        new_cats = await asyncio.get_event_loop().run_in_executor(
+            None, _classify_others, uncached
+        )
+        _db.set_many(new_cats)
+
+    return {"categories": {**cached_cats, **new_cats}}
+
+
+@app.post("/api/torrents/category")
+async def set_torrent_category(body: dict) -> dict:
+    """Persist a manual category change. manual=True means AI re-runs will never overwrite it."""
+    name     = body.get("name", "").strip()
+    category = body.get("category", "").strip()
+    if not name or not category:
+        return JSONResponse({"error": "name and category required"}, status_code=400)
+    _db.set_category(name, category, manual=True)
+    return {"ok": True}
+
+
+@app.post("/api/torrents/done/delete")
+async def delete_done_item(body: dict) -> dict:
+    path = body.get("path", "").strip()
+    if not path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    p = Path(path)
+    torrents_dir = str(config.TORRENTS_DIR)
+    if not str(p).startswith(torrents_dir):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not _is_done(p.name):
+        return JSONResponse({"error": "not a done item"}, status_code=400)
+    if not p.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if p.is_dir():
+        shutil.rmtree(str(p))
+    else:
+        p.unlink()
+    return {"ok": True}
+
+
+@app.post("/api/torrents/done/redo")
+async def redo_done_item(body: dict) -> dict:
+    path = body.get("path", "").strip()
+    if not path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    p = Path(path)
+    torrents_dir = str(config.TORRENTS_DIR)
+    if not str(p).startswith(torrents_dir):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not _is_done(p.name):
+        return JSONResponse({"error": "not a done item"}, status_code=400)
+    if not p.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    original = p.parent / _undone_name(p.name)
+    if original.exists():
+        return JSONResponse({"error": f"already exists: {original.name}"}, status_code=409)
+    p.rename(original)
+    return {"ok": True, "original": original.name}
+
+
+@app.get("/api/db/status")
+async def db_status() -> dict:
+    try:
+        entries = _db.get_all()
+        return {"ok": True, "path": str(_db._DB_PATH), "count": len(entries)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/torrent-size")
@@ -121,7 +245,13 @@ async def torrent_size(path: str) -> dict:
     size = await asyncio.get_event_loop().run_in_executor(
         None, _dir_size if p.is_dir() else lambda _: p.stat().st_size, p
     )
-    return {"size_gb": round(size / 1e9, 1) if size else None}
+    size_gb = round(size / 1e9, 1) if size else None
+    if size_gb is not None:
+        try:
+            _db.set_size(p.name, size_gb)
+        except Exception:
+            pass
+    return {"size_gb": size_gb}
 
 
 @app.post("/api/browse")

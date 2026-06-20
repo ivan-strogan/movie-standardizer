@@ -42,6 +42,26 @@ body {
   font-weight: 600;
   color: #ddd;
 }
+.db-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #666;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
+.db-status .db-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #555;
+}
+.db-status.ok .db-dot  { background: #30a852; }
+.db-status.err .db-dot { background: #c0392b; }
+.db-status.ok  { color: #aaa; }
+.db-status.err { color: #c0392b; border-color: #5a1a1a; }
 .toggle-label {
   display: flex;
   align-items: center;
@@ -136,6 +156,8 @@ body {
 .btn.secondary:hover:not(:disabled) { background: #3a3a3c; color: #ddd; }
 .btn.green { background: #30a852; color: #fff; }
 .btn.green:hover:not(:disabled) { background: #38c060; }
+.btn.danger { background: #7a2020; color: #f08080; border: 1px solid #a03030; }
+.btn.danger:hover:not(:disabled) { background: #9a2a2a; color: #ffaaaa; }
 .btn.red { background: #c0392b; color: #fff; }
 .btn.sm { padding: 5px 10px; font-size: 11px; }
 .btn.xs { padding: 3px 8px; font-size: 11px; border-radius: 5px; }
@@ -453,6 +475,7 @@ body {
   <!-- Title bar -->
   <div class="titlebar">
     <div class="titlebar-title">🎬 Movie Standardizer</div>
+    <div class="db-status" id="db-status"><span class="db-dot"></span><span id="db-status-text">DB ...</span></div>
     <label class="toggle-label" id="dryruntoggle">
       <input type="checkbox" id="dryrun"> Dry run
     </label>
@@ -550,7 +573,7 @@ const state = {
   jobOrder: [],           // ordered list of job_ids (queued + active + done)
   queueRunning: false,
   selected: new Set(),    // set of torrent names selected for batch inspect
-  groupsOpen: { movie: true, tv: false, concert: false, music: false, software: false, other: false },
+  groupsOpen: { movie: true, tv: false, concert: false, music: false, software: false, other: false, done: false },
 };
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -633,8 +656,9 @@ async function loadTorrents() {
 }
 
 async function classifyTorrents() {
+  const doneNames = state.torrents.filter(t => t.category === 'done').map(t => t.name);
   try {
-    const names = state.torrents.map(t => t.name);
+    const names = state.torrents.filter(t => t.category !== 'done').map(t => t.name);
 
     // Call 1: identify movies — render them immediately when response arrives
     const r1 = await fetch('/api/torrents/classify', {
@@ -646,15 +670,15 @@ async function classifyTorrents() {
     const movieNames = data1.movies || [];
     const movieSet = new Set(movieNames);
     for (const t of state.torrents) {
-      if (movieSet.has(t.name)) t.category = 'movie';
+      if (t.category !== 'done' && movieSet.has(t.name)) t.category = 'movie';
     }
-    state.torrentOrder = movieNames;
+    state.torrentOrder = [...movieNames, ...doneNames];
     renderTorrents();
 
 
     // Call 2: categorize non-movies — append them dimmed below
     const nonMovieNames = state.torrents
-      .filter(t => !movieSet.has(t.name))
+      .filter(t => t.category !== 'done' && !movieSet.has(t.name))
       .map(t => t.name);
 
     if (nonMovieNames.length) {
@@ -666,11 +690,11 @@ async function classifyTorrents() {
       const data2 = await r2.json();
       const cats = data2.categories || {};
       for (const t of state.torrents) {
-        if (!movieSet.has(t.name)) t.category = cats[t.name] || 'other';
+        if (t.category !== 'done' && !movieSet.has(t.name)) t.category = cats[t.name] || 'other';
       }
       const strip = n => n.replace(/^(the|a|an)\s+/i, '').toLowerCase();
       const nonMoviesSorted = [...nonMovieNames].sort((a, b) => strip(a).localeCompare(strip(b)));
-      state.torrentOrder = [...movieNames, ...nonMoviesSorted];
+      state.torrentOrder = [...movieNames, ...nonMoviesSorted, ...doneNames];
       renderTorrents();
     }
   } catch(e) {
@@ -680,8 +704,8 @@ async function classifyTorrents() {
   stopChomper();
 }
 
-const GROUP_ORDER = ['movie', 'tv', 'concert', 'music', 'software', 'other'];
-const GROUP_LABEL = { movie: 'Movies', tv: 'TV Shows', concert: 'Concerts', music: 'Music', software: 'Software', other: 'Other' };
+const GROUP_ORDER = ['movie', 'tv', 'concert', 'music', 'software', 'other', 'done'];
+const GROUP_LABEL = { movie: 'Movies', tv: 'TV Shows', concert: 'Concerts', music: 'Music', software: 'Software', other: 'Other', done: 'Done' };
 
 function renderTorrents() {
   const list = document.getElementById('torrents-list');
@@ -724,20 +748,26 @@ function renderTorrents() {
 
     for (const t of items) {
       const pid = pathId(t.path);
-      const sizeText = t.size_gb != null ? `${t.size_gb} GB` : '<span style="color:#333">…</span>';
+      const sizeText = t.size_gb != null ? `${t.size_gb} GB` : '<span style="color:#333">...</span>';
       const isSelected = state.selected.has(t.name);
-      const nameDim = cat !== 'movie' ? ' style="opacity:0.45"' : '';
-      const btn = cat === 'movie'
-        ? `<button class="btn primary xs" onclick="startInspect('${esc(t.path)}')">Inspect</button>
-           <select class="move-select" onchange="changeCategoryOf('${esc(t.name)}', this.value); this.value=''">
-             <option value="">Move to…</option>
-             <option value="tv">TV Shows</option>
-             <option value="concert">Concert</option>
-             <option value="music">Music</option>
-             <option value="software">Software</option>
-             <option value="other">Other</option>
-           </select>`
-        : `<button class="btn secondary xs" onclick="promoteToMovie('${esc(t.name)}')">-> Movie</button>`;
+      const nameDim = (cat !== 'movie' && cat !== 'done') ? ' style="opacity:0.45"' : '';
+      let btn;
+      if (cat === 'done') {
+        btn = `<button class="btn secondary xs" onclick="redoDoneItem('${esc(t.name)}', '${esc(t.path)}')">Redo</button>
+               <button class="btn danger xs" onclick="deleteDoneItem('${esc(t.name)}', '${esc(t.path)}')">Delete</button>`;
+      } else if (cat === 'movie') {
+        btn = `<button class="btn primary xs" onclick="startInspect('${esc(t.path)}')">Inspect</button>
+               <select class="move-select" onchange="changeCategoryOf('${esc(t.name)}', this.value); this.value=''">
+                 <option value="">Move to...</option>
+                 <option value="tv">TV Shows</option>
+                 <option value="concert">Concert</option>
+                 <option value="music">Music</option>
+                 <option value="software">Software</option>
+                 <option value="other">Other</option>
+               </select>`;
+      } else {
+        btn = `<button class="btn secondary xs" onclick="promoteToMovie('${esc(t.name)}')">-> Movie</button>`;
+      }
       html += `
       <div class="torrent-item${isSelected ? ' t-selected' : ''}">
         <input type="checkbox" class="torrent-check" ${isSelected ? 'checked' : ''}
@@ -789,10 +819,42 @@ function changeCategoryOf(name, cat) {
   if (!t) return;
   t.category = cat;
   renderTorrents();
+  fetch('/api/torrents/category', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, category: cat}),
+  });
 }
 
 function promoteToMovie(name) {
   changeCategoryOf(name, 'movie');
+}
+
+async function deleteDoneItem(name, path) {
+  if (!confirm(`Delete "${name}" from disk? This cannot be undone.`)) return;
+  const r = await fetch('/api/torrents/done/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path}),
+  });
+  const data = await r.json();
+  if (!r.ok || data.error) { alert(data.error || 'Delete failed'); return; }
+  state.torrents = state.torrents.filter(t => t.name !== name);
+  delete state.torrentsByName[name];
+  state.torrentOrder = state.torrentOrder ? state.torrentOrder.filter(n => n !== name) : null;
+  renderTorrents();
+}
+
+async function redoDoneItem(name, path) {
+  const r = await fetch('/api/torrents/done/redo', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path}),
+  });
+  const data = await r.json();
+  if (!r.ok || data.error) { alert(data.error || 'Redo failed'); return; }
+  // Reload so the item re-appears under its original name with fresh classification
+  loadTorrents();
 }
 
 function inspectSelected() {
@@ -822,6 +884,7 @@ async function loadTorrentSizes() {
       const i = idx++;
       if (i >= state.torrents.length) return;
       const t = state.torrents[i];
+      if (t.size_gb != null) continue;  // already cached in DB, skip fetch
       try {
         const r = await fetch(`/api/torrent-size?path=${encodeURIComponent(t.path)}`);
         const data = await r.json();
@@ -1384,6 +1447,27 @@ function stopChomper() {
 
 connectWS();
 loadTorrents();
+loadDbStatus();
+
+async function loadDbStatus() {
+  const badge = document.getElementById('db-status');
+  const text  = document.getElementById('db-status-text');
+  try {
+    const r = await fetch('/api/db/status');
+    const d = await r.json();
+    if (d.ok) {
+      badge.className = 'db-status ok';
+      text.textContent = `Remote DB (${d.count} cached)`;
+    } else {
+      badge.className = 'db-status err';
+      text.textContent = 'DB offline';
+      badge.title = d.error || '';
+    }
+  } catch {
+    badge.className = 'db-status err';
+    text.textContent = 'DB offline';
+  }
+}
 </script>
 </body>
 </html>
