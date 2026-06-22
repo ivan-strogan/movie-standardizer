@@ -416,9 +416,6 @@ async def add_job(body: dict) -> dict:
 
     await _broadcast({"type": "job_added", "job": _job_view(job)})
 
-    # Auto-start if queue is already running
-    _maybe_start_worker()
-
     return {"job_id": job_id, "output_name": output_name}
 
 
