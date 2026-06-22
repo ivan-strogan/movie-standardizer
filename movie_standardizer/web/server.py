@@ -400,6 +400,7 @@ async def add_job(body: dict) -> dict:
             "crf_probe":{"status": "waiting", "pct": 0, "label": ""},
             "encode":   {"status": "waiting", "pct": 0, "label": "", "eta": ""},
         },
+        "dry_run":       bool(body.get("dry_run", False)),
         "elapsed":       "",
         "eta":           "",
         "output_size_mb": 0,
@@ -587,7 +588,7 @@ def _run_job(job: dict) -> None:
     try:
         success = pipeline_run(
             Path(job["path"]),
-            dry_run=False,
+            dry_run=job.get("dry_run", False),
             on_progress=on_progress,
             user_overrides=user_overrides,
         )
