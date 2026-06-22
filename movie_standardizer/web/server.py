@@ -663,6 +663,7 @@ def _job_view(job: dict) -> dict:
         "phase":         job["phase"],
         "stages":        job["stages"],
         "elapsed":       job.get("elapsed", ""),
+        "elapsed_secs":  round(time.time() - job["start_time"], 1) if job.get("start_time") else 0,
         "eta":           job.get("eta", ""),
         "output_size_mb": job.get("output_size_mb", 0),
         "error":         job.get("error", ""),
