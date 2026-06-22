@@ -772,7 +772,7 @@ function renderTorrents() {
       html += `
       <div class="torrent-item${isSelected ? ' t-selected' : ''}">
         <input type="checkbox" class="torrent-check" ${isSelected ? 'checked' : ''}
-               onchange="toggleSelect(${JSON.stringify(t.name)})">
+               onchange="toggleSelect('${esc(t.name)}')">
         <span class="torrent-name"${nameDim} title="${esc(t.path)}">${esc(t.name)}</span>
         <span class="torrent-size" id="tsize-${pid}">${sizeText}</span>
         ${btn}
