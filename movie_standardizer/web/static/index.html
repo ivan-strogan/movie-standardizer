@@ -280,6 +280,7 @@ body {
   word-break: break-all;
 }
 .output-preview strong { color: #ddd; }
+.collision-warning { background: rgba(192,57,43,0.12); border: 1px solid #7a2020; color: #f08080; font-size: 11px; padding: 8px 10px; border-radius: 4px; margin-top: 8px; }
 
 .inspect-footer {
   padding: 10px 14px;
@@ -956,20 +957,32 @@ async function addToQueue(path) {
   if (!insp || insp.state !== 'review') return;
 
   const edits = insp.edits;
+  const body = {
+    path,
+    title:      edits.title,
+    year:       parseInt(edits.year) || null,
+    resolution: insp.result.resolution,
+    audio:      edits.audio,
+    subtitles:  edits.subtitles,
+    dry_run:    document.getElementById('dryrun').checked,
+  };
+
   const r = await fetch('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      path,
-      title:      edits.title,
-      year:       parseInt(edits.year) || null,
-      resolution: insp.result.resolution,
-      audio:      edits.audio,
-      subtitles:  edits.subtitles,
-      dry_run:    document.getElementById('dryrun').checked,
-    }),
+    body: JSON.stringify(body),
   });
-  await r.json();
+
+  if (r.status === 409) {
+    const d = await r.json();
+    if (!confirm(`Output already exists: ${d.existing}\n\nAdd to queue anyway?`)) return;
+    await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({...body, force: true}),
+    });
+  }
+
   delete state.inspections[path];
   _renderInspectViews();
 }
@@ -1103,6 +1116,7 @@ function renderInspectCard(insp) {
       <div class="output-preview" id="output-preview-${pid}">
         <strong>${esc(outputName)}</strong>
       </div>
+      ${result.existing_output ? `<div class="collision-warning">Already in library: ${esc(result.existing_output)}</div>` : ''}
     </div>
     <div class="inspect-footer">
       <button class="btn secondary" onclick="cancelInspect('${esc(insp.path)}')">Cancel</button>

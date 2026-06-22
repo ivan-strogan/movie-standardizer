@@ -352,12 +352,21 @@ def _do_inspect(source: Path) -> dict:
     suffix = probe.folder_suffix
     output_name = f"{movie_info.title}{year_str} [{res}]{suffix}"
 
+    base = f"{movie_info.title} ({movie_info.year})" if movie_info.year else movie_info.title
+    existing_output = None
+    if config.OUTPUT_DIR.exists():
+        existing_output = next(
+            (d.name for d in config.OUTPUT_DIR.iterdir()
+             if d.is_dir() and d.name.startswith(base)),
+            None,
+        )
+
     return {
-        "path":         str(source),
-        "video_file":   str(video_file),
-        "title":        movie_info.title,
-        "year":         movie_info.year,
-        "resolution":   res,
+        "path":            str(source),
+        "video_file":      str(video_file),
+        "title":           movie_info.title,
+        "year":            movie_info.year,
+        "resolution":      res,
         "video": {
             "codec":     probe.video.codec,
             "width":     probe.video.width,
@@ -366,11 +375,12 @@ def _do_inspect(source: Path) -> dict:
             "bit_depth": probe.video.bit_depth,
             "resolution": probe.resolution,
         },
-        "audio":        audio,
-        "subtitles":    subtitles,
-        "output_name":  output_name,
-        "duration_secs": probe.duration_secs,
-        "size_bytes":   probe.size_bytes,
+        "audio":           audio,
+        "subtitles":       subtitles,
+        "output_name":     output_name,
+        "existing_output": existing_output,
+        "duration_secs":   probe.duration_secs,
+        "size_bytes":      probe.size_bytes,
     }
 
 
@@ -384,6 +394,21 @@ async def add_job(body: dict) -> dict:
 
     job_id = str(uuid.uuid4())[:8]
     output_name = _compute_output_name(body)
+
+    if not body.get("force", False) and config.OUTPUT_DIR.exists():
+        title = body.get("title", "")
+        year  = body.get("year")
+        base  = f"{title} ({year})" if year else title
+        existing = next(
+            (d.name for d in config.OUTPUT_DIR.iterdir()
+             if d.is_dir() and d.name.startswith(base)),
+            None,
+        )
+        if existing:
+            return JSONResponse(
+                {"collision": True, "output_name": output_name, "existing": existing},
+                status_code=409,
+            )
 
     job = {
         "id":          job_id,
