@@ -576,7 +576,47 @@ const state = {
   queueRunning: false,
   selected: new Set(),    // set of torrent names selected for batch inspect
   groupsOpen: { movie: true, tv: false, concert: false, music: false, software: false, other: false, done: false },
+  _elapsedInterval: null,
+  _elapsedBase: null,     // { time: ms, secs: float } — anchor for client-side interpolation
+  _elapsedJobId: null,    // job ID currently being timed; prevents re-anchoring on each update
 };
+
+// ── Active job elapsed timer ───────────────────────────────────────────────
+
+function _fmtWhole(secs) {
+  secs = Math.floor(secs);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h) return `${h}h ${String(m).padStart(2,'0')}m`;
+  if (m) return `${m}m ${String(s).padStart(2,'0')}s`;
+  return `${s}s`;
+}
+
+function _startElapsedTimer(jobId, baseSecs) {
+  if (state._elapsedJobId === jobId) return;  // already ticking for this job -- don't re-anchor
+  state._elapsedJobId = jobId;
+  state._elapsedBase = { time: Date.now(), secs: baseSecs };
+  const el = document.getElementById('active-elapsed');
+  if (el) el.textContent = _fmtWhole(baseSecs);
+  if (!state._elapsedInterval) {
+    state._elapsedInterval = setInterval(() => {
+      if (!state._elapsedBase) return;
+      const secs = state._elapsedBase.secs + (Date.now() - state._elapsedBase.time) / 1000;
+      const el = document.getElementById('active-elapsed');
+      if (el) el.textContent = _fmtWhole(secs);
+    }, 1000);
+  }
+}
+
+function _stopElapsedTimer() {
+  if (state._elapsedInterval) {
+    clearInterval(state._elapsedInterval);
+    state._elapsedInterval = null;
+  }
+  state._elapsedBase = null;
+  state._elapsedJobId = null;
+}
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
 
@@ -596,6 +636,9 @@ function handleWSMessage(msg) {
       state.jobOrder.push(job.id);
     }
     state.queueRunning = msg.queue_running;
+    const activeJob = msg.jobs.find(j => j.phase === 'encoding');
+    if (activeJob) _startElapsedTimer(activeJob.id, activeJob.elapsed_secs || 0);
+    else _stopElapsedTimer();
     renderQueue();
     renderActive();
     renderCompleted();
@@ -609,6 +652,8 @@ function handleWSMessage(msg) {
     renderQueue();
   } else if (msg.type === 'job_update') {
     state.jobs[msg.job.id] = msg.job;
+    if (msg.job.phase === 'encoding') _startElapsedTimer(msg.job.id, msg.job.elapsed_secs || 0);
+    else _stopElapsedTimer();
     renderActive();
     renderQueue();
     renderCompleted();
@@ -1230,7 +1275,6 @@ function renderActive() {
   panel.style.display = '';
 
   document.getElementById('active-name').textContent = active.output_name || active.title;
-  document.getElementById('active-elapsed').textContent = active.elapsed || '—';
   document.getElementById('active-eta').textContent = active.eta ? `ETA: ~${active.eta}` : '';
 
   const stageOrder = [
