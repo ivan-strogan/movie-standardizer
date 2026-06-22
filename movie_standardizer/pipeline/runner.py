@@ -129,23 +129,18 @@ def run(
     print(f"  Output name: {job.output_name}")
     print(f"  Output file: {job.output_file}")
 
-    if dry_run:
-        print("  [dry-run] encode command:")
-        encode(probe_result, audio_tracks, job.output_file, dry_run=True,
-               subtitle_overrides=subtitle_overrides)
-        return True
-
-    # Check output doesn't already exist
-    if job.output_file.exists():
+    # Check output doesn't already exist (skip in dry run)
+    if not dry_run and job.output_file.exists():
         print(f"  SKIP: output already exists: {job.output_file}")
         return False
 
-    # Stage 6: encode
+    # Stage 6: encode (dry_run runs CRF probe but skips full encode)
     print()
     success = encode(
         probe_result,
         audio_tracks,
         job.output_file,
+        dry_run=dry_run,
         on_progress=on_progress,
         subtitle_overrides=subtitle_overrides,
     )
@@ -153,10 +148,10 @@ def run(
     if not success:
         return False
 
-    # Stage 7: mark source as done
-    _mark_done(source)
-
-    print(f"  Source marked done: {source.name}{config.SOURCE_DONE_SUFFIX}")
+    # Stage 7: mark source as done (skip in dry run)
+    if not dry_run:
+        _mark_done(source)
+        print(f"  Source marked done: {source.name}{config.SOURCE_DONE_SUFFIX}")
     return True
 
 

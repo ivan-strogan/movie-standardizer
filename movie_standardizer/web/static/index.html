@@ -966,6 +966,7 @@ async function addToQueue(path) {
       resolution: insp.result.resolution,
       audio:      edits.audio,
       subtitles:  edits.subtitles,
+      dry_run:    document.getElementById('dryrun').checked,
     }),
   });
   await r.json();
@@ -1281,12 +1282,14 @@ function renderCompleted() {
       </div>`;
     }
     const sizeStr = j.output_size_mb ? `${j.output_size_mb} MB` : '';
+    const encodeLabel = j.stages?.encode?.label || '';
+    const note = encodeLabel.startsWith('dry run') ? ` · ${encodeLabel}` : '';
     return `
     <div class="completed-item">
       <span class="check-icon">✓</span>
       <div class="completed-info">
         <div class="completed-name">${esc(j.output_name)}</div>
-        <div class="completed-meta">${esc(j.elapsed)} ${sizeStr ? '· ' + sizeStr : ''}</div>
+        <div class="completed-meta">${esc(j.elapsed)}${note}${sizeStr ? ' · ' + sizeStr : ''}</div>
       </div>
       <button class="btn secondary sm" onclick="reveal('${j.id}')">Show in Finder</button>
     </div>`;

@@ -46,16 +46,10 @@ def encode(
 
     initial_crf = _crf_for_source(source_codec, input_size, duration_secs)
 
-    if dry_run:
-        cmd = _build_command(input_path, tmp_path, audio_tracks, result, initial_crf, subtitle_overrides)
-        print(f"  [dry-run] CRF={initial_crf} codec={source_codec}")
-        print("  " + " ".join(_quote(c) for c in cmd))
-        return True
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if tmp_path.exists():
-        tmp_path.unlink()
+    if not dry_run:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if tmp_path.exists():
+            tmp_path.unlink()
 
     log_path = _log_path(input_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +74,13 @@ def encode(
             on_progress(stage="crf_probe", pct=1.0, message="skipped (< 20 min)")
 
     cmd = _build_command(input_path, tmp_path, audio_tracks, result, crf, subtitle_overrides)
+
+    if dry_run:
+        print(f"  [dry-run] CRF={crf} codec={source_codec}")
+        print("  " + " ".join(_quote(c) for c in cmd))
+        if on_progress:
+            on_progress(stage="encode", pct=1.0, message=f"dry run -- CRF={crf}")
+        return True
 
     print(f"  Encoding  CRF={crf}", flush=True)
     if on_progress:
