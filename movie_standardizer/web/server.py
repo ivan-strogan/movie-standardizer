@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..ai.name_parser import ContentSkipped, _check_skip, parse
 from ..media.audio import select_audio_tracks
+from ..media.encoder import kill_active as _kill_active_encode
 from ..media.streams import analyze
 from ..pipeline.runner import _find_video, run as pipeline_run
 from .. import config
@@ -483,6 +484,12 @@ async def queue_stop() -> dict:
     return {"stopping": True}
 
 
+@app.post("/api/queue/stop-current")
+async def queue_stop_current() -> dict:
+    killed = _kill_active_encode()
+    return {"killed": killed}
+
+
 # ── REST: Reveal in Finder ────────────────────────────────────────────────────
 
 @app.post("/api/reveal/{job_id}")
@@ -667,6 +674,11 @@ def _job_view(job: dict) -> dict:
         "eta":           job.get("eta", ""),
         "output_size_mb": job.get("output_size_mb", 0),
         "error":         job.get("error", ""),
+        "year":          job.get("year"),
+        "resolution":    job.get("resolution"),
+        "audio":         job.get("audio"),
+        "subtitles":     job.get("subtitles"),
+        "dry_run":       job.get("dry_run", False),
     }
 
 

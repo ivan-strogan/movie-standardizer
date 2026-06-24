@@ -159,6 +159,7 @@ body {
 .btn.danger { background: #7a2020; color: #f08080; border: 1px solid #a03030; }
 .btn.danger:hover:not(:disabled) { background: #9a2a2a; color: #ffaaaa; }
 .btn.red { background: #c0392b; color: #fff; }
+.btn.red:hover:not(:disabled) { background: #e74c3c; }
 .btn.sm { padding: 5px 10px; font-size: 11px; }
 .btn.xs { padding: 3px 8px; font-size: 11px; border-radius: 5px; }
 .move-select { background: #2c2c2e; color: #aaa; border: 1px solid #3a3a3c; border-radius: 5px; font-size: 11px; padding: 3px 6px; cursor: pointer; }
@@ -550,6 +551,7 @@ body {
     <div class="active-footer">
       <span>Elapsed: <strong id="active-elapsed">—</strong></span>
       <span id="active-eta"></span>
+      <button class="btn red sm" onclick="stopCurrent()">Stop Now</button>
     </div>
   </div>
 
@@ -1367,7 +1369,15 @@ async function requeueJob(id) {
   await fetch('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: j.path, title: j.title }),
+    body: JSON.stringify({
+      path:       j.path,
+      title:      j.title,
+      year:       j.year,
+      resolution: j.resolution,
+      audio:      j.audio,
+      subtitles:  j.subtitles,
+      dry_run:    j.dry_run,
+    }),
   });
 }
 
@@ -1379,6 +1389,10 @@ async function startQueue() {
 
 async function stopQueue() {
   await fetch('/api/queue/stop', { method: 'POST' });
+}
+
+async function stopCurrent() {
+  await fetch('/api/queue/stop-current', { method: 'POST' });
 }
 
 async function reveal(id) {
