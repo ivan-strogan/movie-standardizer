@@ -20,6 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..ai.client import check_ollama as _check_ollama
 from ..ai.name_parser import ContentSkipped, _check_skip, parse
 from ..media.audio import select_audio_tracks
 from ..media.encoder import kill_active as _kill_active_encode
@@ -243,6 +244,15 @@ async def db_reset(body: dict) -> dict:
     full = bool(body.get("full", False))
     deleted = _db.reset_all() if full else _db.reset_auto()
     return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/ollama/status")
+async def ollama_status() -> dict:
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _check_ollama)
+        return {"ok": True, "model": config.OLLAMA_MODEL, "error": ""}
+    except RuntimeError as e:
+        return {"ok": False, "model": config.OLLAMA_MODEL, "error": str(e)}
 
 
 @app.get("/api/torrent-size")

@@ -478,6 +478,7 @@ body {
   <div class="titlebar">
     <div class="titlebar-title">🎬 Movie Standardizer</div>
     <div class="db-status" id="db-status"><span class="db-dot"></span><span id="db-status-text">DB ...</span></div>
+    <div class="db-status" id="ollama-status"><span class="db-dot"></span><span id="ollama-status-text">Ollama ...</span></div>
     <button class="btn secondary xs" onclick="rescanDb()" style="font-size:11px">Rescan</button>
     <label class="toggle-label" id="dryruntoggle">
       <input type="checkbox" id="dryrun"> Dry run
@@ -1533,6 +1534,8 @@ function stopChomper() {
 connectWS();
 loadTorrents();
 loadDbStatus();
+loadOllamaStatus();
+setInterval(loadOllamaStatus, 30000);
 
 async function rescanDb() {
   if (!confirm('Clear cached classifications and re-run AI?\nManual overrides will be kept.')) return;
@@ -1565,6 +1568,27 @@ async function loadDbStatus() {
   } catch {
     badge.className = 'db-status err';
     text.textContent = 'DB offline';
+  }
+}
+
+async function loadOllamaStatus() {
+  const badge = document.getElementById('ollama-status');
+  const text  = document.getElementById('ollama-status-text');
+  try {
+    const r = await fetch('/api/ollama/status');
+    const d = await r.json();
+    if (d.ok) {
+      badge.className = 'db-status ok';
+      text.textContent = `Ollama (${d.model})`;
+      badge.title = '';
+    } else {
+      badge.className = 'db-status err';
+      text.textContent = 'Ollama offline';
+      badge.title = d.error || '';
+    }
+  } catch {
+    badge.className = 'db-status err';
+    text.textContent = 'Ollama offline';
   }
 }
 </script>
