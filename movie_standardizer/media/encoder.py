@@ -15,11 +15,46 @@ from __future__ import annotations
 
 import math
 import subprocess
+import threading
 from pathlib import Path
 
 from .audio import AudioOutputTrack, build_audio_args
 from .streams import ProbeResult
 from .. import config
+
+
+# ── Active process tracking ───────────────────────────────────────────────────
+
+_active_proc: subprocess.Popen | None = None
+_active_proc_lock = threading.Lock()
+_kill_requested = False
+
+
+def kill_active() -> bool:
+    """Kill the currently running ffmpeg process. Returns True if one was killed."""
+    global _kill_requested
+    with _active_proc_lock:
+        if _active_proc is not None:
+            _kill_requested = True
+            _active_proc.kill()
+            return True
+    return False
+
+
+def _set_active_proc(proc: subprocess.Popen | None) -> None:
+    global _active_proc
+    with _active_proc_lock:
+        _active_proc = proc
+
+
+def _check_killed() -> bool:
+    """Returns True and resets the flag if a kill was requested."""
+    global _kill_requested
+    with _active_proc_lock:
+        if _kill_requested:
+            _kill_requested = False
+            return True
+    return False
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -37,6 +72,8 @@ def encode(
     Returns True on success, False on failure.
     The output directory is created if it does not exist.
     """
+    _check_killed()  # clear any stale kill flag from a previous job
+
     input_path = result.path
     tmp_path   = output_path.with_suffix(".tmp.mkv")
 
@@ -73,6 +110,9 @@ def encode(
         if on_progress:
             on_progress(stage="crf_probe", pct=1.0, message="skipped (< 20 min)")
 
+    if _check_killed():
+        return False
+
     cmd = _build_command(input_path, tmp_path, audio_tracks, result, crf, subtitle_overrides)
 
     if dry_run:
@@ -97,7 +137,9 @@ def encode(
             stderr=log_fh,
             text=True,
         )
+        _set_active_proc(proc)
         _run_with_progress(proc, duration_secs, on_progress=on_progress)
+        _set_active_proc(None)
 
     if proc.returncode != 0:
         _cleanup(tmp_path)
@@ -297,7 +339,9 @@ def _probe_crf(
                         stderr=lf,
                         text=True,
                     )
+                _set_active_proc(proc)
                 _run_with_progress(proc, clip_dur)
+                _set_active_proc(None)
                 print()
                 if proc.returncode != 0 or not enc.exists():
                     ok = False
