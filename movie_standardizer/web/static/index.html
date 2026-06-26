@@ -653,6 +653,7 @@ function handleWSMessage(msg) {
     delete state.jobs[msg.job_id];
     state.jobOrder = state.jobOrder.filter(id => id !== msg.job_id);
     renderQueue();
+    renderCompleted();
   } else if (msg.type === 'job_update') {
     state.jobs[msg.job.id] = msg.job;
     if (msg.job.phase === 'encoding') _startElapsedTimer(msg.job.id, msg.job.elapsed_secs || 0);
@@ -803,11 +804,11 @@ function renderTorrents() {
       const nameDim = (cat !== 'movie' && cat !== 'done') ? ' style="opacity:0.45"' : '';
       let btn;
       if (cat === 'done') {
-        btn = `<button class="btn secondary xs" onclick="redoDoneItem('${esc(t.name)}', '${esc(t.path)}')">Redo</button>
-               <button class="btn danger xs" onclick="deleteDoneItem('${esc(t.name)}', '${esc(t.path)}')">Delete</button>`;
+        btn = `<button class="btn secondary xs" onclick="redoDoneItem(${jsArg(t.name)}, ${jsArg(t.path)})">Redo</button>
+               <button class="btn danger xs" onclick="deleteDoneItem(${jsArg(t.name)}, ${jsArg(t.path)})">Delete</button>`;
       } else if (cat === 'movie') {
-        btn = `<button class="btn primary xs" onclick="startInspect('${esc(t.path)}')">Inspect</button>
-               <select class="move-select" onchange="changeCategoryOf('${esc(t.name)}', this.value); this.value=''">
+        btn = `<button class="btn primary xs" onclick="startInspect(${jsArg(t.path)})">Inspect</button>
+               <select class="move-select" onchange="changeCategoryOf(${jsArg(t.name)}, this.value); this.value=''">
                  <option value="">Move to...</option>
                  <option value="tv">TV Shows</option>
                  <option value="concert">Concert</option>
@@ -816,12 +817,12 @@ function renderTorrents() {
                  <option value="other">Other</option>
                </select>`;
       } else {
-        btn = `<button class="btn secondary xs" onclick="promoteToMovie('${esc(t.name)}')">-> Movie</button>`;
+        btn = `<button class="btn secondary xs" onclick="promoteToMovie(${jsArg(t.name)})">-> Movie</button>`;
       }
       html += `
       <div class="torrent-item${isSelected ? ' t-selected' : ''}">
         <input type="checkbox" class="torrent-check" ${isSelected ? 'checked' : ''}
-               onchange="toggleSelect('${esc(t.name)}')">
+               onchange="toggleSelect(${jsArg(t.name)})">
         <span class="torrent-name"${nameDim} title="${esc(t.path)}">${esc(t.name)}</span>
         <span class="torrent-size" id="tsize-${pid}">${sizeText}</span>
         ${btn}
@@ -1090,7 +1091,7 @@ function renderInspectCard(insp) {
     <div class="inspect-panel" style="border-color:#c0392b">
       <div class="inspect-header" style="background:rgba(192,57,43,0.08)">
         <span class="inspect-title" style="color:#c0392b">${esc(name)}</span>
-        <button class="btn secondary sm" onclick="cancelInspect('${esc(insp.path)}')">Dismiss</button>
+        <button class="btn secondary sm" onclick="cancelInspect(${jsArg(insp.path)})">Dismiss</button>
       </div>
       <div class="inspect-body">
         <div style="color:#c0392b;font-size:12px">${esc(insp.error)}</div>
@@ -1112,10 +1113,10 @@ function renderInspectCard(insp) {
         <div class="stream-codec">${esc(codecLabel)}</div>
         <div class="stream-ch">${chanLabel}</div>
         ${atmosBadge}
-        <select class="stream-select" onchange="setAudioLang('${esc(insp.path)}',${i},this.value)">
+        <select class="stream-select" onchange="setAudioLang(${jsArg(insp.path)},${i},this.value)">
           ${langOptions(a.language)}
         </select>
-        <select class="stream-action-select ${actionClass}" onchange="setAudioAction('${esc(insp.path)}',${i},this.value)">
+        <select class="stream-action-select ${actionClass}" onchange="setAudioAction(${jsArg(insp.path)},${i},this.value)">
           <option value="copy"    ${a.action==='copy'?'selected':''}>Copy</option>
           <option value="encode"  ${a.action==='encode'?'selected':''}>Encode -> AC3</option>
           <option value="exclude" ${a.action==='exclude'?'selected':''}>Exclude</option>
@@ -1128,11 +1129,11 @@ function renderInspectCard(insp) {
       <div class="stream-num">${i + 1}</div>
       <div class="stream-codec">${esc(s.codec.toUpperCase())}</div>
       <div class="stream-ch"></div>
-      <select class="stream-select" onchange="setSubLang('${esc(insp.path)}',${i},this.value)">
+      <select class="stream-select" onchange="setSubLang(${jsArg(insp.path)},${i},this.value)">
         ${langOptions(s.language)}
       </select>
       <label class="sub-include">
-        <input type="checkbox" ${s.include?'checked':''} onchange="setSubInclude('${esc(insp.path)}',${i},this.checked)"> Include
+        <input type="checkbox" ${s.include?'checked':''} onchange="setSubInclude(${jsArg(insp.path)},${i},this.checked)"> Include
       </label>
     </div>`).join('');
 
@@ -1167,8 +1168,8 @@ function renderInspectCard(insp) {
       ${result.existing_output ? `<div class="collision-warning">Already in library: ${esc(result.existing_output)}</div>` : ''}
     </div>
     <div class="inspect-footer">
-      <button class="btn secondary" onclick="cancelInspect('${esc(insp.path)}')">Cancel</button>
-      <button class="btn green" onclick="addToQueue('${esc(insp.path)}')">Add to Queue -></button>
+      <button class="btn secondary" onclick="cancelInspect(${jsArg(insp.path)})">Cancel</button>
+      <button class="btn green" onclick="addToQueue(${jsArg(insp.path)})">Add to Queue -></button>
     </div>
   </div>`;
 }
@@ -1424,6 +1425,12 @@ function esc(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function jsArg(s) {
+  // Produces a JS string literal safe for use in onclick="fn(${jsArg(x)})"
+  // Uses JSON double-quoted encoding then HTML-escapes the outer quotes.
+  return JSON.stringify(String(s ?? '')).replace(/"/g, '&quot;');
 }
 
 function pathId(path) {

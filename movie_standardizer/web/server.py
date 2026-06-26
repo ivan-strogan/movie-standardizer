@@ -327,7 +327,11 @@ def _do_inspect(source: Path) -> dict:
 
     # Default audio selection (so UI shows sensible defaults)
     default_tracks = select_audio_tracks(probe)
-    default_actions = {t.source_index: t.codec_arg for t in default_tracks}
+    # Map codec_arg ("ac3"/"copy") to UI action names ("encode"/"copy")
+    default_actions = {
+        t.source_index: ("encode" if t.codec_arg == "ac3" else "copy")
+        for t in default_tracks
+    }
     # Tracks excluded by default (e.g. AAC covered by TrueHD)
     included_indices = {t.source_index for t in default_tracks}
 
