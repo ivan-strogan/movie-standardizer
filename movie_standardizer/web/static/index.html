@@ -457,6 +457,59 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.classify-summary {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cs-header {
+  font-size: 11px;
+  color: #888;
+  font-family: monospace;
+}
+.cs-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cs-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.cs-rlabel {
+  font-size: 10px;
+  color: #555;
+  min-width: 130px;
+  flex-shrink: 0;
+}
+.cs-rval {
+  font-size: 10px;
+  color: #888;
+  font-family: monospace;
+}
+.cs-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 18px;
+}
+.cs-item {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+.cs-label {
+  font-size: 10px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cs-count {
+  font-size: 10px;
+  color: #999;
+  font-family: monospace;
+}
 .ai-search-query {
   margin-top: 4px;
   font-size: 10px;
@@ -495,11 +548,12 @@ body {
       </div>
     </div>
     <div class="panel-body" id="body-torrents">
-      <div class="ai-status-bar" id="ai-status" style="visibility:hidden">
+      <div class="ai-status-bar" id="ai-status" style="display:none">
         <div class="ai-chomper" id="ai-chomper"></div>
-        <span class="ai-sort-label">AI sorting</span>
+        <span class="ai-sort-label" id="ai-sort-label">AI sorting</span>
         <div class="ai-search-query" id="ai-search-query" style="display:none"></div>
         <div class="ai-thinking" id="ai-thinking" style="display:none"></div>
+        <div class="classify-summary" id="classify-summary" style="display:none"></div>
       </div>
       <div id="torrents-list"></div>
       <div class="select-bar" id="select-bar" style="display:none">
@@ -579,6 +633,7 @@ const state = {
   queueRunning: false,
   selected: new Set(),    // set of torrent names selected for batch inspect
   groupsOpen: { movie: true, tv: false, concert: false, music: false, software: false, other: false, done: false },
+  classifyStats: null,   // populated by classify_stats WS event
   _elapsedInterval: null,
   _elapsedBase: null,     // { time: ms, secs: float } — anchor for client-side interpolation
   _elapsedJobId: null,    // job ID currently being timed; prevents re-anchoring on each update
@@ -672,11 +727,14 @@ function handleWSMessage(msg) {
       thinkEl.scrollTop = thinkEl.scrollHeight;
     }
   } else if (msg.type === 'ai_search') {
+    _classifyWebSearchCount++;
     const el = document.getElementById('ai-search-query');
     if (el) {
       el.textContent = `🔍 ${msg.query}`;
       el.style.display = 'block';
     }
+  } else if (msg.type === 'classify_stats') {
+    state.classifyStats = msg;
   }
 }
 
@@ -699,6 +757,8 @@ async function loadTorrents() {
   if (thinkEl) { thinkEl.textContent = ''; thinkEl.style.display = 'none'; }
   const searchEl = document.getElementById('ai-search-query');
   if (searchEl) { searchEl.textContent = ''; searchEl.style.display = 'none'; }
+  const summaryEl2 = document.getElementById('classify-summary');
+  if (summaryEl2) { summaryEl2.innerHTML = ''; summaryEl2.style.display = 'none'; }
   renderTorrents();
   startChomper();
   startSortTimer();
@@ -707,6 +767,8 @@ async function loadTorrents() {
 }
 
 async function classifyTorrents() {
+  _classifyWebSearchCount = 0;
+  state.classifyStats = null;
   const doneNames = state.torrents.filter(t => t.category === 'done').map(t => t.name);
   try {
     const names = state.torrents.filter(t => t.category !== 'done').map(t => t.name);
@@ -752,7 +814,16 @@ async function classifyTorrents() {
     state.torrentOrder = state.torrents.map(t => t.name);
     renderTorrents();
   }
-  stopChomper();
+  const elapsed = _sortTimerStart ? _fmtElapsed((Date.now() - _sortTimerStart) / 1000) : '';
+  const counts = {};
+  for (const t of state.torrents) counts[t.category] = (counts[t.category] || 0) + 1;
+  stopChomper('AI sort complete', {
+    total: state.torrents.length,
+    elapsed,
+    webSearches: _classifyWebSearchCount,
+    counts,
+    stats: state.classifyStats,
+  });
 }
 
 const GROUP_ORDER = ['movie', 'tv', 'concert', 'music', 'software', 'other', 'done'];
@@ -1478,6 +1549,7 @@ const _CHOMP_FRAMES = (() => {
 let _chompTimer = null;
 let _sortTimerStart = null;
 let _sortTimerInterval = null;
+let _classifyWebSearchCount = 0;
 
 function _fmtElapsed(secs) {
   const h = Math.floor(secs / 3600);
@@ -1489,6 +1561,7 @@ function _fmtElapsed(secs) {
 }
 
 function startSortTimer() {
+  clearInterval(_sortTimerInterval);
   _sortTimerStart = Date.now();
   const el = document.getElementById('sort-timer');
   if (el) el.textContent = '0.0s';
@@ -1514,9 +1587,20 @@ function _renderChompFrame(frame) {
 }
 
 function startChomper() {
+  clearInterval(_chompTimer);
   const bar = document.getElementById('ai-status');
   if (!bar) return;
-  bar.style.visibility = 'visible';
+  bar.style.display = 'flex';
+  // Reset label and chomper for new run
+  const label = document.getElementById('ai-sort-label');
+  if (label) label.textContent = 'AI sorting';
+  const chomper = document.getElementById('ai-chomper');
+  if (chomper) chomper.style.display = '';
+  // Clear old thinking and summary from previous run
+  const thinkEl = document.getElementById('ai-thinking');
+  if (thinkEl) { thinkEl.textContent = ''; thinkEl.style.display = 'none'; }
+  const summaryEl = document.getElementById('classify-summary');
+  if (summaryEl) { summaryEl.innerHTML = ''; summaryEl.style.display = 'none'; }
   let i = 0;
   _renderChompFrame(_CHOMP_FRAMES[0]);
   _chompTimer = setInterval(() => {
@@ -1524,16 +1608,64 @@ function startChomper() {
   }, 120);
 }
 
-function stopChomper() {
+function stopChomper(label, summaryData) {
   clearInterval(_chompTimer);
   _chompTimer = null;
   stopSortTimer();
-  const bar = document.getElementById('ai-status');
-  if (bar) bar.style.visibility = 'hidden';
-  const thinkEl = document.getElementById('ai-thinking');
-  if (thinkEl) { thinkEl.style.display = 'none'; thinkEl.textContent = ''; }
+  // Hide the animation and search line
+  const chomper = document.getElementById('ai-chomper');
+  if (chomper) chomper.style.display = 'none';
   const searchEl = document.getElementById('ai-search-query');
   if (searchEl) { searchEl.style.display = 'none'; searchEl.textContent = ''; }
+  // Hide the thinking box (was used during streaming)
+  const thinkEl = document.getElementById('ai-thinking');
+  if (thinkEl) { thinkEl.style.display = 'none'; }
+  // Update label
+  const labelEl = document.getElementById('ai-sort-label');
+  if (labelEl && label) labelEl.textContent = label;
+  // Clear the sort-timer
+  const timerEl = document.getElementById('sort-timer');
+  if (timerEl) timerEl.textContent = '';
+  // Render clean summary in the gray area
+  if (summaryData) {
+    const summaryEl = document.getElementById('classify-summary');
+    if (summaryEl) {
+      const { total, elapsed, counts, stats } = summaryData;
+      const timeStr = elapsed ? ` in ${elapsed}` : '';
+      let html = `<div class="cs-header">Sorted ${total} items${timeStr}</div>`;
+
+      if (stats) {
+        const s = stats;
+        const call1Detail = `${s.call1_movies} movies, ${s.call1_not_movies} not movies, ${s.call1_unsure} unsure`;
+        const call2Detail = s.call2_searches > 0
+          ? `${s.call2_searches} searches -> ${s.call2_movies} more movies`
+          : 'none needed';
+        html += `
+          <div class="cs-breakdown">
+            <div class="cs-row"><span class="cs-rlabel">Pre-filtered</span><span class="cs-rval">${s.pre_filtered}</span></div>
+            <div class="cs-row"><span class="cs-rlabel">Call 1 (${s.call1_ai} items)</span><span class="cs-rval">${call1Detail}</span></div>
+            <div class="cs-row"><span class="cs-rlabel">Call 2 (web search)</span><span class="cs-rval">${call2Detail}</span></div>
+          </div>`;
+      }
+
+      const cats = [
+        ['Movies',   counts['movie']    || 0],
+        ['TV Shows', counts['tv']       || 0],
+        ['Concerts', counts['concert']  || 0],
+        ['Music',    counts['music']    || 0],
+        ['Software', counts['software'] || 0],
+        ['Other',    counts['other']    || 0],
+        ['Done',     counts['done']     || 0],
+      ].filter(([, n]) => n > 0);
+      const rows = cats.map(([lbl, n]) =>
+        `<span class="cs-item"><span class="cs-label">${lbl}</span><span class="cs-count">${n}</span></span>`
+      ).join('');
+      html += `<div class="cs-grid">${rows}</div>`;
+      summaryEl.innerHTML = html;
+      summaryEl.style.display = 'flex';
+    }
+  }
+  // ai-status bar stays visible
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -1555,7 +1687,7 @@ async function rescanDb() {
   const d = await r.json();
   if (!d.ok) { alert('Reset failed'); return; }
   await loadTorrents();
-  classifyTorrents();
+  // loadTorrents() already launches classifyTorrents() internally — don't call it again
 }
 
 async function loadDbStatus() {
