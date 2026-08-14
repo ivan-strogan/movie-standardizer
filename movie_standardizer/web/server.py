@@ -138,7 +138,8 @@ async def classify_torrents(body: dict) -> dict:
 
     cached        = _db.get_all()
     cached_movies = [n for n in names if cached.get(n, {}).get("category") == "movie"]
-    uncached      = [n for n in names if n not in cached]
+    # treat "unknown" (set by size-loading) as uncached so it goes through AI
+    uncached      = [n for n in names if n not in cached or cached[n]["category"] == "unknown"]
 
     new_movies: list[str] = []
     thinking = ""
@@ -165,9 +166,9 @@ async def classify_others_endpoint(body: dict) -> dict:
     cached_cats = {
         n: cached[n]["category"]
         for n in names
-        if n in cached and cached[n]["category"] not in ("movie", "not_movie")
+        if n in cached and cached[n]["category"] not in ("movie", "not_movie", "unknown")
     }
-    uncached = [n for n in names if n not in cached or cached[n]["category"] == "not_movie"]
+    uncached = [n for n in names if n not in cached or cached[n]["category"] in ("not_movie", "unknown")]
 
     new_cats: dict[str, str] = {}
     if uncached:
@@ -753,7 +754,7 @@ _SEARCH_TOOL = {
 def _web_search(query: str) -> str:
     try:
         from ddgs import DDGS
-        with DDGS() as ddgs:
+        with DDGS(timeout=15) as ddgs:
             results = list(ddgs.text(query, max_results=3))
         if not results:
             return "No results found."
@@ -764,17 +765,49 @@ def _web_search(query: str) -> str:
 
 def _classify_movies(names: list[str]) -> tuple[list[str], str]:
     """Two-phase AI classification:
-    - Call 1: AI sorts all names into movies / not_movies / unsure (no tools, knowledge only)
-    - Call 2: AI resolves only the 'unsure' items using web_search
+    - Pre-filter: obvious non-movies caught by regex skip rules (no AI needed)
+    - Call 1: AI sorts remaining into movies / not_movies / unsure (no tools)
+    - Call 2: AI resolves unsure items using web_search
 
     Returns (sorted movie names, thinking text).
+    Logs full AI input/output to OUTPUT_DIR/logs/classify.log.
     """
+    import datetime
     import json
     import re
     import ollama
 
     if not names:
         return [], ""
+
+    # ── Log setup ─────────────────────────────────────────────────────────────
+    _log_file = config.LOGS_DIR / "classify.log"
+    _log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _log(msg: str) -> None:
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {msg}"
+        print(line, flush=True)
+        try:
+            with open(_log_file, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    _log(f"=== classify_movies: {len(names)} names ===")
+
+    # ── Pre-filter: regex skip rules catch obvious non-movies without AI ──────
+    ai_candidates: list[str] = []
+    pre_not_movies: list[str] = []
+    for name in names:
+        try:
+            _check_skip(name)
+            ai_candidates.append(name)
+        except ContentSkipped as e:
+            pre_not_movies.append(name)
+            _log(f"  pre-filter NOT_MOVIE: {name!r}  ({e.reason})")
+
+    _log(f"  pre-filter: {len(ai_candidates)} to AI, {len(pre_not_movies)} rejected")
 
     thinking_parts: list[str] = []
 
@@ -789,8 +822,9 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
         "When in doubt, put it in unsure — a second pass will handle those.\n\n"
         "Russian/Cyrillic: песни/хиты/альбом/дискография = music (not_movies). "
         "Бременские музыканты / Простоквашино = animated films (movies).\n"
-        "Video quality markers (1080p, BluRay, WEBRip, x265, HDRip) strongly indicate a movie.\n"
-        "Movie box sets (e.g. 'Complete Collection', '1-6 Box Set') count as movies.\n\n"
+        "Video quality markers (1080p, BluRay, WEBRip, x265, HDRip) strongly indicate a movie.\n\n"
+        "Put in NOT_MOVIES if the name is clearly software, an installer, a disk image (.iso, .dmg, .exe), "
+        "a document (.pdf, .epub), an audio file (.mp3, .flac, .wav), or a music album/discography.\n"
         "Put in UNSURE if the name contains: [Vinyl Rip], Vinyl, OST, Soundtrack — "
         "even when the title is a known movie name, these usually mean the music release not the film.\n"
         "Put in UNSURE if the resolution is very low (576p, 480p) with no other quality markers.\n\n"
@@ -798,14 +832,19 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
     )
 
     movies_from_call1: list[str] = []
+    call1_not_movies: list[str] = []
     unsure: list[str] = []
+    call2_search_count = 0
 
     CHUNK_SIZE = 50
-    chunks = [names[i:i + CHUNK_SIZE] for i in range(0, len(names), CHUNK_SIZE)]
+    chunks = [ai_candidates[i:i + CHUNK_SIZE] for i in range(0, len(ai_candidates), CHUNK_SIZE)]
+
+    _log(f"[call1] system prompt: {call1_prompt}")
 
     for chunk_idx, chunk in enumerate(chunks):
-        print(f"[classify/call1] chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} items)")
-        indexed = {str(i): name for i, name in enumerate(chunk)}
+        _log(f"[call1] chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} items)")
+        indexed = {str(i): name[:300] for i, name in enumerate(chunk)}
+        _log(f"[call1] input: {json.dumps(indexed)}")
         try:
             thinking_buf = ""
             reply_buf = ""
@@ -831,7 +870,9 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
             if thinking_buf:
                 print()
                 thinking_parts.append(thinking_buf)
+                _log(f"[call1] thinking ({len(thinking_buf)} chars): {thinking_buf[:500]}...")
             reply = reply_buf.strip()
+            _log(f"[call1] reply: {reply}")
 
             reply = re.sub(r"^```[a-z]*\s*", "", reply)
             reply = re.sub(r"\s*```$", "", reply.strip())
@@ -847,108 +888,136 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
             dropped_keys = {str(i) for i in range(len(chunk))} - all_assigned
             if dropped_keys:
                 dropped_names = [chunk[int(k)] for k in sorted(dropped_keys, key=int)]
-                print(f"[classify/call1] chunk {chunk_idx + 1} WARNING: {len(dropped_keys)} keys dropped → unsure: {dropped_names}")
+                _log(f"[call1] WARNING: {len(dropped_keys)} keys dropped -> unsure: {dropped_names}")
                 unsure_keys |= dropped_keys
 
             chunk_movies = [name for i, name in enumerate(chunk) if str(i) in movie_keys]
             chunk_unsure = [name for i, name in enumerate(chunk) if str(i) in unsure_keys]
             chunk_not    = [name for i, name in enumerate(chunk) if str(i) in not_movie_keys]
 
-            print(f"[classify/call1] chunk {chunk_idx + 1}: movies={len(chunk_movies)} not_movies={len(chunk_not)} unsure={len(chunk_unsure)}")
+            _log(f"[call1] chunk {chunk_idx + 1}: movies={len(chunk_movies)} not_movies={len(chunk_not)} unsure={len(chunk_unsure)}")
+            _log(f"[call1] movies: {chunk_movies}")
+            _log(f"[call1] not_movies: {chunk_not}")
+            _log(f"[call1] unsure: {chunk_unsure}")
             movies_from_call1.extend(chunk_movies)
+            call1_not_movies.extend(chunk_not)
             unsure.extend(chunk_unsure)
 
         except Exception as e:
-            print(f"[classify/call1] chunk {chunk_idx + 1} error: {e} — treating all as movies")
-            movies_from_call1.extend(chunk)
+            _log(f"[call1] chunk {chunk_idx + 1} ERROR: {e} — treating all as UNSURE (not movie)")
+            unsure.extend(chunk)  # safe fallback: go to Call 2 with web search
 
-    print(f"[classify/call1] TOTAL: movies={len(movies_from_call1)} unsure={len(unsure)}")
-    print(f"[classify/call1] MOVIES: {movies_from_call1}")
-    print(f"[classify/call1] UNSURE: {unsure}")
+    _log(f"[call1] TOTAL: movies={len(movies_from_call1)} unsure={len(unsure)}")
 
-    # ── Call 2: mandatory web search for every unsure item, then single AI call ─
+    # ── Call 2: web search + AI per chunk of unsure items (max 20 at a time) ───
     movies_from_call2: list[str] = []
 
-    if unsure:
-        print(f"[classify/call2] pre-searching {len(unsure)} unsure items...")
-        search_data: dict[str, str] = {}
-        for i, name in enumerate(unsure):
-            query = name.replace('_', ' ')
-            print(f"[search] ({i + 1}/{len(unsure)}) {query}")
-            _broadcast_sync({"type": "ai_search", "query": f"({i + 1}/{len(unsure)}) {query}"})
-            search_data[str(i)] = _web_search(query)
+    call2_prompt = (
+        "You receive a list of folder/file names together with web search results for each entry.\n"
+        "Based on the search results and the name, classify each entry.\n"
+        "Return ONLY a JSON array of keys (numbers) that are MOVIES.\n"
+        "Example: [0, 2]\n\n"
+        "INCLUDE: feature films, animated films (any country/genre).\n"
+        "EXCLUDE: music albums, concerts, TV shows, software, books, games, box sets.\n\n"
+        "Audio format clues — if these appear in the name, it is almost certainly music/audio, NOT a movie:\n"
+        "  - [Vinyl Rip], Vinyl -> music pressed on vinyl record\n"
+        "  - .WAV, .CUE, Lossless, FLAC -> lossless audio files, not video\n"
+        "  - DTS.WAV, WAV.CUE -> audio-only release\n"
+        "Even if the title matches a known movie (e.g. 'Tron Legacy [Vinyl Rip]'), "
+        "these audio markers mean it is the soundtrack or music release, not the film itself.\n\n"
+        "Output ONLY the final JSON array."
+    )
 
-        user_parts = []
-        for i, name in enumerate(unsure):
-            results = search_data.get(str(i), "No results.")
-            user_parts.append(f"[{i}] Name: {name}\nSearch results:\n{results}")
+    CALL2_CHUNK = 20
+    unsure_chunks = [unsure[i:i + CALL2_CHUNK] for i in range(0, len(unsure), CALL2_CHUNK)]
+
+    if unsure_chunks:
+        _log(f"[call2] {len(unsure)} unsure items -> {len(unsure_chunks)} chunk(s) of {CALL2_CHUNK}")
+        _log(f"[call2] system prompt: {call2_prompt}")
+
+    for c2_idx, c2_chunk in enumerate(unsure_chunks):
+        _log(f"[call2] chunk {c2_idx + 1}/{len(unsure_chunks)}: searching {len(c2_chunk)} items...")
+        search_data: dict[str, str] = {}
+        for i, name in enumerate(c2_chunk):
+            query = name.replace('_', ' ')
+            overall = sum(len(ch) for ch in unsure_chunks[:c2_idx]) + i + 1
+            total   = len(unsure)
+            _log(f"[search] ({overall}/{total}) {query}")
+            _broadcast_sync({"type": "ai_search", "query": f"({overall}/{total}) {query}"})
+            search_data[str(i)] = _web_search(query)
+            call2_search_count += 1
+
+        user_parts = [
+            f"[{i}] Name: {name}\nSearch results:\n{search_data.get(str(i), 'No results.')}"
+            for i, name in enumerate(c2_chunk)
+        ]
         user_content = "\n\n---\n\n".join(user_parts)
 
-        call2_prompt = (
-            "You receive a list of folder/file names together with web search results for each entry.\n"
-            "Based on the search results and the name, classify each entry.\n"
-            "Return ONLY a JSON array of keys (numbers) that are MOVIES.\n"
-            "Example: [0, 2]\n\n"
-            "INCLUDE: feature films, animated films (any country/genre), movie box sets (collections of multiple films).\n"
-            "EXCLUDE: music albums, concerts, TV shows, software, books, games.\n\n"
-            "Audio format clues — if these appear in the name, it is almost certainly music/audio, NOT a movie:\n"
-            "  - [Vinyl Rip], Vinyl → music pressed on vinyl record\n"
-            "  - .WAV, .CUE, Lossless, FLAC → lossless audio files, not video\n"
-            "  - DTS.WAV, WAV.CUE → audio-only release\n"
-            "Even if the title matches a known movie (e.g. 'Tron Legacy [Vinyl Rip]'), "
-            "these audio markers mean it is the soundtrack or music release, not the film itself.\n\n"
-            "Output ONLY the final JSON array."
-        )
-
-        messages2 = [
-            {"role": "system", "content": call2_prompt},
-            {"role": "user",   "content": user_content},
-        ]
-
+        _log(f"[call2] chunk {c2_idx + 1}: sending to AI")
         reply2 = ""
         thinking_buf2 = ""
         try:
-            for chunk in ollama.Client().chat(
+            for msg in ollama.Client().chat(
                 model=config.OLLAMA_MODEL,
                 think=True,
-                options={"num_ctx": 32768},
+                options={"num_ctx": 16384},
                 stream=True,
-                messages=messages2,
+                messages=[
+                    {"role": "system", "content": call2_prompt},
+                    {"role": "user",   "content": user_content},
+                ],
             ):
-                t = getattr(chunk.message, "thinking", None) or ""
+                t = getattr(msg.message, "thinking", None) or ""
                 if t:
                     thinking_buf2 += t
                     print(t, end="", flush=True)
                     _broadcast_sync({"type": "thinking_chunk", "text": t})
-                c = chunk.message.content or ""
+                c = msg.message.content or ""
                 if c:
                     reply2 += c
 
             if thinking_buf2:
                 print()
                 thinking_parts.append(thinking_buf2)
+                _log(f"[call2] chunk {c2_idx + 1} thinking ({len(thinking_buf2)} chars): {thinking_buf2[:300]}...")
+            _log(f"[call2] chunk {c2_idx + 1} reply: {reply2.strip()}")
 
-            reply2 = re.sub(r"^```[a-z]*\s*", "", reply2.strip())
-            reply2 = re.sub(r"\s*```$", "", reply2.strip())
-            m2 = re.search(r"\[.*\]", reply2, re.DOTALL)
-            ai_keys2 = set(str(k) for k in json.loads(m2.group() if m2 else reply2))
-            movies_from_call2 = [name for i, name in enumerate(unsure) if str(i) in ai_keys2]
-            rejected2 = [name for i, name in enumerate(unsure) if str(i) not in ai_keys2]
-            print(f"[classify/call2] movies={len(movies_from_call2)} rejected={len(rejected2)}")
-            print(f"[classify/call2] MOVIES: {movies_from_call2}")
-            print(f"[classify/call2] REJECTED: {rejected2}")
+            if not reply2.strip():
+                _log(f"[call2] chunk {c2_idx + 1} empty reply — skipping chunk (safe fallback)")
+                continue
+
+            r = re.sub(r"^```[a-z]*\s*", "", reply2.strip())
+            r = re.sub(r"\s*```$", "", r.strip())
+            m2 = re.search(r"\[.*\]", r, re.DOTALL)
+            ai_keys2 = set(str(k) for k in json.loads(m2.group() if m2 else r))
+            chunk_movies2 = [name for i, name in enumerate(c2_chunk) if str(i) in ai_keys2]
+            rejected2     = [name for i, name in enumerate(c2_chunk) if str(i) not in ai_keys2]
+            _log(f"[call2] chunk {c2_idx + 1}: movies={len(chunk_movies2)} rejected={len(rejected2)}")
+            _log(f"[call2] chunk {c2_idx + 1} movies: {chunk_movies2}")
+            _log(f"[call2] chunk {c2_idx + 1} rejected: {rejected2}")
+            movies_from_call2.extend(chunk_movies2)
 
         except Exception as e:
-            print(f"[classify/call2] error: {e}")
-            movies_from_call2 = list(unsure)
+            _log(f"[call2] chunk {c2_idx + 1} ERROR: {e} — skipping chunk (safe fallback)")
 
     # Remove anything the AI miscounted as a movie but is clearly a TV episode
     _TV_EPISODE = _re.compile(r"\bS\d{1,2}E\d{1,2}\b|\(s\d{2}\)", _re.IGNORECASE)
     tv_filtered = [n for n in movies_from_call1 + movies_from_call2 if _TV_EPISODE.search(n)]
     all_movies  = [n for n in movies_from_call1 + movies_from_call2 if not _TV_EPISODE.search(n)]
     if tv_filtered:
-        print(f"[classify] TV filter removed: {tv_filtered}")
-    print(f"[classify] TOTAL MOVIES ({len(all_movies)}): {all_movies}")
+        _log(f"[classify] TV filter removed: {tv_filtered}")
+    _log(f"[classify] FINAL MOVIES ({len(all_movies)}): {all_movies}")
+    _broadcast_sync({
+        "type": "classify_stats",
+        "pre_filtered": len(pre_not_movies),
+        "call1_ai": len(ai_candidates),
+        "call1_movies": len(movies_from_call1),
+        "call1_not_movies": len(call1_not_movies),
+        "call1_unsure": len(unsure),
+        "call2_searches": call2_search_count,
+        "call2_movies": len(movies_from_call2),
+        "tv_filtered": len(tv_filtered),
+    })
     thinking = "\n\n".join(thinking_parts)
     all_movies.sort(key=lambda n: re.sub(r"^(the|a|an)\s+", "", n, flags=re.IGNORECASE).lower())
     return all_movies, thinking
@@ -960,7 +1029,7 @@ def _classify_others(names: list[str]) -> dict[str, str]:
     import re
     import ollama
 
-    indexed = {str(i): name for i, name in enumerate(names)}
+    indexed = {str(i): name[:300] for i, name in enumerate(names)}
     try:
         response = ollama.Client().chat(
             model=config.OLLAMA_MODEL,

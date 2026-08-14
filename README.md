@@ -2,6 +2,57 @@
 
 Takes movies from a Torrents folder, standardizes the name and format, and outputs a converted copy into `Movies_AV1`.
 
+## Architecture
+
+```
+Browser (localhost:8081)
+|
+|  REST calls                        WebSocket /ws
+|  /api/torrents                     |
+|  /api/torrents/classify            real-time job updates
+|  /api/torrents/classify-others     (progress %, ETA, phase)
+|  /api/inspect
+|  /api/jobs
+v
+FastAPI server (server.py)
+|
++-- CLASSIFICATION FLOW (/api/torrents/classify)
+|   |
+|   +-- 1. DB cache check (SQLite)
+|   |       cached? -> return immediately
+|   |       unknown/uncached -> continue
+|   |
+|   +-- 2. Pre-filter (_check_skip regex)
+|   |       S01E02, .dmg, [PDF], etc -> not_movie, no AI needed
+|   |
+|   +-- 3. Call 1  (Ollama, chunks of 50)
+|   |       system: "sort into movies / not_movies / unsure"
+|   |       user:   {"0": "Tarzan (1999)...", "1": "Backstreet Boys..."}
+|   |       reply:  {"movies": [0], "not_movies": [1], "unsure": [...]}
+|   |
+|   +-- 4. Call 2 for unsure only  (Ollama, chunks of 20)
+|           DuckDuckGo search (1 query per item, 15s timeout)
+|           system: "given search results, which are movies?"
+|           user:   "[0] Name: Blue - All Rise\nSearch results: ..."
+|           reply:  [7, 12]   <- just the movie indices
+|
++-- INSPECT FLOW (/api/inspect)
+|   |
+|   +-- ffprobe -> video/audio/subtitle streams
+|   +-- Ollama name parser -> {title, year, resolution}
+|   +-- audio rules -> which tracks to copy / encode to AC3
+|
++-- ENCODE QUEUE (background thread)
+        queued -> probing -> crf_tune -> encoding -> done
+        ffmpeg CRF probe (10 x 1-min clips to find optimal CRF)
+        ffmpeg full AV1 encode (SVT-AV1)
+        -> /Volumes/video/Movies_AV1/Title (Year) [res] AC3/
+
+SQLite DB  (classifications.db)
+    name -> {category, size_gb, manual}
+    cache survives server restarts; Rescan wipes non-manual entries
+```
+
 ## What it does
 
 1. **Parses the movie name** — uses a local Ollama LLM with a web search tool to extract a clean title, year, and resolution from messy torrent folder/file names. The LLM handles all the naming chaos that regex alone can't reliably solve.
@@ -191,12 +242,53 @@ cp .env.example .env   # edit if your paths differ
 
 ## Usage
 
+### Web UI (recommended)
+
+```bash
+uv run python main.py --web
+```
+
+Opens http://localhost:8081 automatically. Requires Ollama to be running.
+
+#### How to use the web UI
+
+1. **Torrents panel** — loads on startup. The AI scans all items in your Torrents folder and groups them: Movies at the top, then TV Shows, Concerts, Music, Software, Other, and Done (already converted). AI classification runs in the background; a Pac-Man animation shows while it's thinking.
+
+2. **Correct a misclassification** — use the "Move to..." dropdown next to any movie to reassign it to a different category (or the "-> Movie" button on any non-movie to promote it). Manual corrections are saved to the DB and survive future re-scans.
+
+3. **Inspect a movie** — click **Inspect** on any movie row (or paste a path into the "Add movie" box and click Inspect). This runs ffprobe + AI name parse and opens a review card showing:
+   - Editable **Title** and **Year** fields
+   - Every **audio stream** with a language selector and action (Copy / Encode -> AC3 / Exclude)
+   - Every **subtitle track** with include/exclude toggle
+   - A live **output filename preview** that updates as you edit
+
+4. **Add to queue** — once you're happy with the review, click **Add to Queue ->**. Repeat for as many movies as you want.
+
+5. **Start encoding** — click **Start Queue**. Each job runs through three stages shown with progress bars:
+   - **Probe** — ffprobe stream analysis
+   - **CRF Tune** — 10 sample clips encoded to find the optimal CRF (skipped for files under 20 min)
+   - **Encode** — full AV1 encode with percentage and ETA
+
+6. **Stop / skip** — **Stop after current** finishes the active job then pauses. **Stop Now** kills the active ffmpeg immediately.
+
+7. **Completed** — finished jobs appear in a Completed section with elapsed time and output size. **Show in Finder** reveals the output file. Errored jobs have a **Retry** button.
+
+8. **Rescan** — clears the AI classification cache and re-runs the AI on everything. Manual overrides (from step 2) are preserved unless you choose to wipe everything.
+
+9. **Dry run** — enable the **Dry run** toggle before adding jobs to queue. The CRF probe still runs but the full encode is skipped; output shows what would have been produced.
+
+### CLI
+
 ```bash
 # Convert a single movie (folder or file path)
 uv run python main.py "/Volumes/Torrents/3TB Mirror/Torrents/Tarzan (1999) (1080p BluRay x265 HEVC 10bit AAC 5.0 Tigole)"
 
-# Dry run — shows parsed name and stream plan, no encoding
+# Dry run — shows parsed name, stream plan, and ffmpeg command without encoding
 uv run python main.py --dry-run "/Volumes/Torrents/3TB Mirror/Torrents/Tarzan (1999) ..."
+
+# Fix naming issues in the output library
+uv run python main.py --fix-library
+uv run python main.py --fix-library --dry-run   # preview without renaming
 ```
 
 ## Project structure
@@ -207,14 +299,19 @@ movie_standardizer/
 ├── ai/
 │   ├── client.py      — Ollama agent client
 │   ├── tools.py       — web_search tool (DuckDuckGo)
-│   └── name_parser.py — parse torrent name → {title, year, resolution}
+│   └── name_parser.py — parse torrent name -> {title, year, resolution}
 ├── media/
 │   ├── probe.py       — ffprobe wrapper
 │   ├── streams.py     — stream classification
 │   └── encoder.py     — AV1 CRF probe + full encode
-└── pipeline/
-    ├── job.py         — Job dataclass
-    └── runner.py      — full pipeline orchestration
+├── pipeline/
+│   ├── job.py         — Job dataclass
+│   └── runner.py      — full pipeline orchestration
+└── web/
+    ├── server.py      — FastAPI server + AI classification endpoints
+    ├── db.py          — SQLite cache for AI classifications
+    └── static/
+        └── index.html — single-page web UI
 main.py                — CLI entry point
 ```
 
