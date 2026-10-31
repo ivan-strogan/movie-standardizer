@@ -78,6 +78,9 @@ AAC_TRANSCODE_CODECS = {"aac", "mp3", "vorbis", "opus"}
 
 AC3_BITRATE = "640k"
 
+# AC3 must be 48 kHz: TVs/receivers glitch on 44.1 kHz AC3 (audio skips, loses sync).
+AC3_SAMPLE_RATE = 48000
+
 # Only drop a track when it is a provable exact duplicate:
 # same codec + same language tag + same channel count already seen in the file.
 # Never drop based on language tag alone — most torrents leave language as 'und'.

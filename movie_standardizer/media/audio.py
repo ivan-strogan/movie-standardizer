@@ -134,6 +134,8 @@ def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
         args += [f"-c:a:{i}", t.codec_arg]
         if t.bitrate_arg:
             args += [f"-b:a:{i}", t.bitrate_arg]
+        if t.codec_arg == "ac3":
+            args += [f"-ar:a:{i}", str(config.AC3_SAMPLE_RATE)]
         if t.language:
             args += [f"-metadata:s:a:{i}", f"language={t.language}"]
         if t.title:
