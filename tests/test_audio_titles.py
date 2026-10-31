@@ -56,3 +56,16 @@ def test_override_language_changes_title_and_tag():
     t = apply_audio_overrides(_probe(_audio(1, "ac3", 6)),
                               [{"source_index": 1, "action": "copy", "language": "rus"}])[0]
     assert t.title == "Russian DD 5.1" and t.language == "rus"
+
+
+def test_other_language_tracks_are_excluded():
+    other = _audio(2, "aac", 2, lang="")
+    other.lang_source = "other"
+    tracks = select_audio_tracks(_probe(_audio(1, "aac", 6), other))
+    assert [t.source_index for t in tracks] == [1]
+
+
+def test_other_language_surround_does_not_set_folder_suffix():
+    dts = _audio(2, "dts", 6, lang="")
+    dts.lang_source = "other"
+    assert _probe(_audio(1, "aac", 6), dts).best_audio_codec == "ac3"

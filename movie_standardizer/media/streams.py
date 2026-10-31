@@ -115,6 +115,8 @@ class ProbeResult:
         After processing, AAC surround tracks become AC3.
         """
         for a in self.audio:
+            if a.lang_source == "other":
+                continue   # excluded from the output
             if a.is_surround:
                 if a.needs_ac3_encode or a.needs_resample:
                     return "ac3"

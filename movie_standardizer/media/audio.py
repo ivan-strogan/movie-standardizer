@@ -43,10 +43,12 @@ def select_audio_tracks(result: ProbeResult) -> list[AudioOutputTrack]:
        exists with the same language (or both are untagged), skip the AAC --
        the passthrough already covers that slot. Otherwise encode to AC3.
     3. Keep all stereo/mono tracks as copy regardless of codec.
-    4. Preserve original stream order (passthrough first if it came first,
+    4. Drop tracks detected as neither English nor Russian.
+    5. Preserve original stream order (passthrough first if it came first,
        then converted, then stereo).
     """
-    tracks = result.audio
+    # Tracks in a language other than English/Russian are not kept
+    tracks = [t for t in result.audio if t.lang_source != "other"]
 
     # Build a set of language slots already covered by passthrough surround
     passthrough_surround_langs: set[str] = set()

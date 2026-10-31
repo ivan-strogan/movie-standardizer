@@ -30,7 +30,7 @@ MIN_AGREEMENT    = 0.9     # winner's share of the en+ru probability, summed
 
 @dataclass
 class LanguageResult:
-    language:   str          # "eng", "rus", or "" if inconclusive
+    language:   str          # "eng", "rus", "other" (some other language), or "" if inconclusive
     confidence: float        # winner's share of en+ru probability, 0 if inconclusive
     clips_used: int
     reason:     str = ""     # why it was inconclusive
@@ -42,6 +42,9 @@ def decide(clips: list[tuple[float, float]]) -> LanguageResult:
     p_ru includes Ukrainian (a Ukrainian track is tagged Russian).
     """
     usable = [(en, ru) for en, ru in clips if en + ru >= MIN_EN_RU_MASS]
+    if not usable and len(clips) >= MIN_CLIPS:
+        return LanguageResult("other", 0.0, len(clips),
+                              "speech is neither English nor Russian")
     if len(usable) < MIN_CLIPS:
         return LanguageResult("", 0.0, len(usable),
                               f"only {len(usable)} clip(s) clearly English or Russian")
@@ -112,10 +115,14 @@ def assign_languages(path: Path, audio: list[AudioStream], duration: float,
 
     Inconclusive tracks fall back to the title guess (Cyrillic -> rus, else
     eng) and are marked lang_source="fallback" so they can be reviewed.
+    Tracks in some other language get no language and lang_source="other";
+    they are excluded from the output (never mislabeled as English/Russian).
     """
     for a in audio:
         result = detect_track_language(path, a.index, duration)
-        if result.language:
+        if result.language == "other":
+            a.language, a.lang_source, a.lang_confidence = "", "other", 0.0
+        elif result.language:
             a.language, a.lang_source, a.lang_confidence = result.language, "detected", result.confidence
         else:
             cyrillic = any("Ѐ" <= ch <= "ӿ" for ch in movie_title)

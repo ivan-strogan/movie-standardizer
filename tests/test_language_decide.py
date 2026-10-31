@@ -28,7 +28,7 @@ def test_clips_that_disagree_are_inconclusive():
 def test_other_language_is_not_forced_into_english_or_russian():
     # French speech: neither en nor ru gets meaningful probability
     r = decide([(0.05, 0.02), (0.03, 0.01), (0.06, 0.02)])
-    assert r.language == ""
+    assert r.language == "other"
 
 
 def test_weak_margin_is_inconclusive():
@@ -40,3 +40,12 @@ def test_low_mass_clips_are_ignored_not_counted_against():
     # one clip is music/other, three are clearly Russian
     r = decide([(0.02, 0.05), (0.0, 0.98), (0.01, 0.97), (0.0, 0.99)])
     assert r.language == "rus" and r.clips_used == 3
+
+
+def test_clearly_other_language_is_marked_other_not_inconclusive():
+    r = decide([(0.02, 0.01), (0.03, 0.0), (0.01, 0.02), (0.04, 0.01)])
+    assert r.language == "other"
+
+
+def test_two_other_language_clips_is_only_inconclusive():
+    assert decide([(0.02, 0.01), (0.03, 0.0)]).language == ""
