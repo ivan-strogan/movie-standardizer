@@ -841,9 +841,11 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
 
     _log(f"[call1] system prompt: {call1_prompt}")
 
+    _URL_PREFIX = _re.compile(r"^(?:https?://|www\.)\S+\s*-\s*", _re.IGNORECASE)
+
     for chunk_idx, chunk in enumerate(chunks):
         _log(f"[call1] chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} items)")
-        indexed = {str(i): name[:300] for i, name in enumerate(chunk)}
+        indexed = {str(i): _URL_PREFIX.sub("", name)[:300] for i, name in enumerate(chunk)}
         _log(f"[call1] input: {json.dumps(indexed)}")
         try:
             thinking_buf = ""
@@ -948,7 +950,7 @@ def _classify_movies(names: list[str]) -> tuple[list[str], str]:
             call2_search_count += 1
 
         user_parts = [
-            f"[{i}] Name: {name}\nSearch results:\n{search_data.get(str(i), 'No results.')}"
+            f"[{i}] Name: {_URL_PREFIX.sub('', name)}\nSearch results:\n{search_data.get(str(i), 'No results.')}"
             for i, name in enumerate(c2_chunk)
         ]
         user_content = "\n\n---\n\n".join(user_parts)
@@ -1029,7 +1031,8 @@ def _classify_others(names: list[str]) -> dict[str, str]:
     import re
     import ollama
 
-    indexed = {str(i): name[:300] for i, name in enumerate(names)}
+    _url_prefix = re.compile(r"^(?:https?://|www\.)\S+\s*-\s*", re.IGNORECASE)
+    indexed = {str(i): _url_prefix.sub("", name)[:300] for i, name in enumerate(names)}
     try:
         response = ollama.Client().chat(
             model=config.OLLAMA_MODEL,
