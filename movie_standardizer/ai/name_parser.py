@@ -129,7 +129,7 @@ _NON_VIDEO  = re.compile(
     re.IGNORECASE,
 )
 _SOFTWARE   = re.compile(
-    r"\b(repack|portable|appz|build\s+\d|multilingual|final)\b",
+    r"\b(portable|appz|build\s+\d|multilingual|final)\b",
     re.IGNORECASE,
 )
 _BOX_SET    = re.compile(
