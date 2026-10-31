@@ -41,6 +41,7 @@ class AudioStream:
     bitrate:    int          # kbps, 0 if unknown
     is_default: bool
     profile:    str = ""     # e.g. "Dolby TrueHD + Dolby Atmos"
+    sample_rate: int = 0     # Hz, 0 if unknown
 
     @property
     def has_atmos(self) -> bool:
@@ -60,13 +61,21 @@ class AudioStream:
         )
 
     @property
+    def needs_resample(self) -> bool:
+        """True for AC3/EAC3 not at 48 kHz: copying it would keep the bad rate."""
+        return (
+            self.codec.lower() in ("ac3", "eac3")
+            and self.sample_rate not in (0, config.AC3_SAMPLE_RATE)
+        )
+
+    @property
     def is_passthrough(self) -> bool:
         """True if this track should be stream-copied without re-encoding."""
         return self.codec.lower() in config.SURROUND_PASSTHROUGH
 
     @property
     def action(self) -> str:
-        if self.needs_ac3_encode:
+        if self.needs_ac3_encode or self.needs_resample:
             return "encode->ac3"
         return "copy"
 
@@ -105,7 +114,7 @@ class ProbeResult:
         """
         for a in self.audio:
             if a.is_surround:
-                if a.needs_ac3_encode:
+                if a.needs_ac3_encode or a.needs_resample:
                     return "ac3"
                 return a.codec.lower()
         return ""
@@ -248,6 +257,7 @@ def _classify_audio(streams: list[dict]) -> list[AudioStream]:
             bitrate    = bitrate,
             is_default = default,
             profile    = profile,
+            sample_rate = int(s.get("sample_rate") or 0),
         ))
 
     return result

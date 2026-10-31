@@ -77,6 +77,7 @@ SURROUND_PASSTHROUGH = {"ac3", "eac3", "dts", "truehd", "mlp", "dts-hd", "dca"}
 AAC_TRANSCODE_CODECS = {"aac", "mp3", "vorbis", "opus"}
 
 AC3_BITRATE = "640k"
+AC3_STEREO_BITRATE = "192k"   # stereo/mono AC3 re-encodes (e.g. resampling a 44.1 kHz stereo AC3)
 
 # AC3 must be 48 kHz: TVs/receivers glitch on 44.1 kHz AC3 (audio skips, loses sync).
 AC3_SAMPLE_RATE = 48000
