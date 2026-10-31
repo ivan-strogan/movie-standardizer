@@ -322,7 +322,7 @@ def _do_inspect(source: Path) -> dict:
 
     # ffprobe
     try:
-        probe = analyze(video_file)
+        probe = analyze(video_file, detect_languages=True, movie_title=movie_info.title)
     except Exception as e:
         return {"error": f"Probe failed: {e}"}
 
@@ -350,6 +350,8 @@ def _do_inspect(source: Path) -> dict:
             "profile":  a.profile,
             "action":   action if included else "exclude",
             "has_atmos": a.has_atmos,
+            "language_source":     a.lang_source,       # "detected" or "fallback" (needs review)
+            "language_confidence": round(a.lang_confidence, 2),
         })
 
     subtitles = []
