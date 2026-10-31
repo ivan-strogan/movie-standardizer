@@ -41,6 +41,9 @@ class AudioStream:
     bitrate:    int          # kbps, 0 if unknown
     is_default: bool
     profile:    str = ""     # e.g. "Dolby TrueHD + Dolby Atmos"
+    sample_rate: int = 0     # Hz, 0 if unknown
+    lang_source: str = ""    # "detected", "fallback" (detection inconclusive), or "" (source tag)
+    lang_confidence: float = 0.0
 
     @property
     def has_atmos(self) -> bool:
@@ -60,13 +63,21 @@ class AudioStream:
         )
 
     @property
+    def needs_resample(self) -> bool:
+        """True for AC3/EAC3 not at 48 kHz: copying it would keep the bad rate."""
+        return (
+            self.codec.lower() in ("ac3", "eac3")
+            and self.sample_rate not in (0, config.AC3_SAMPLE_RATE)
+        )
+
+    @property
     def is_passthrough(self) -> bool:
         """True if this track should be stream-copied without re-encoding."""
         return self.codec.lower() in config.SURROUND_PASSTHROUGH
 
     @property
     def action(self) -> str:
-        if self.needs_ac3_encode:
+        if self.needs_ac3_encode or self.needs_resample:
             return "encode->ac3"
         return "copy"
 
@@ -104,8 +115,10 @@ class ProbeResult:
         After processing, AAC surround tracks become AC3.
         """
         for a in self.audio:
+            if a.lang_source == "other":
+                continue   # excluded from the output
             if a.is_surround:
-                if a.needs_ac3_encode:
+                if a.needs_ac3_encode or a.needs_resample:
                     return "ac3"
                 return a.codec.lower()
         return ""
@@ -129,8 +142,13 @@ class ProbeResult:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def analyze(path: Path) -> ProbeResult:
+def analyze(path: Path, detect_languages: bool = False, movie_title: str = "") -> ProbeResult:
     """Probe a media file and return a classified ProbeResult.
+
+    With detect_languages=True the spoken language of every audio track is
+    detected from the audio (source tags are ignored), before duplicate
+    tracks are dropped. movie_title is used for the fallback guess when
+    detection is inconclusive.
 
     Raises FileNotFoundError if the file doesn't exist.
     Raises ValueError if ffprobe fails or the file has no video stream.
@@ -146,11 +164,16 @@ def analyze(path: Path) -> ProbeResult:
     fmt       = data.get("format", {})
 
     video     = _pick_video(streams)
-    audio     = _classify_audio(streams)
+    audio     = _classify_audio(streams, dedupe=not detect_languages)
     subtitles = _classify_subtitles(streams)
 
     duration  = float(fmt.get("duration") or 0)
     size      = int(fmt.get("size") or path.stat().st_size)
+
+    if detect_languages:
+        from .language import assign_languages
+        assign_languages(path, audio, duration, movie_title)
+        audio = _dedupe_audio(audio)
 
     return ProbeResult(
         path=path,
@@ -214,42 +237,41 @@ def _parse_fps(fps_str: str) -> str:
 
 # ── Audio ─────────────────────────────────────────────────────────────────────
 
-def _classify_audio(streams: list[dict]) -> list[AudioStream]:
-    """Return all audio streams, with exact duplicates removed.
+def _classify_audio(streams: list[dict], dedupe: bool = True) -> list[AudioStream]:
+    """Return all audio streams, with exact duplicates removed (if dedupe).
 
     Duplicate = same codec + same normalised language + same channel count.
     The first occurrence is kept; subsequent identical ones are dropped.
-    Unknown language (und / empty) is kept — never dropped on language alone.
     """
-    raw_audio = [s for s in streams if s.get("codec_type") == "audio"]
-    seen: set[tuple] = set()
     result: list[AudioStream] = []
 
-    for s in raw_audio:
-        codec    = (s.get("codec_name") or "").lower()
-        channels = int(s.get("channels") or 0)
-        lang     = _norm_lang(s.get("tags", {}).get("language", ""))
-        title    = s.get("tags", {}).get("title", "") or ""
-        bitrate  = _bitrate_kbps(s)
-        default  = bool(s.get("disposition", {}).get("default"))
-        profile  = s.get("profile", "") or ""
-
-        key = (codec, lang, channels)
-        if key in seen:
-            continue   # exact duplicate — drop
-        seen.add(key)
-
+    for s in streams:
+        if s.get("codec_type") != "audio":
+            continue
         result.append(AudioStream(
-            index      = s["index"],
-            codec      = codec,
-            channels   = channels,
-            language   = lang,
-            title      = title,
-            bitrate    = bitrate,
-            is_default = default,
-            profile    = profile,
+            index       = s["index"],
+            codec       = (s.get("codec_name") or "").lower(),
+            channels    = int(s.get("channels") or 0),
+            language    = _norm_lang(s.get("tags", {}).get("language", "")),
+            title       = s.get("tags", {}).get("title", "") or "",
+            bitrate     = _bitrate_kbps(s),
+            is_default  = bool(s.get("disposition", {}).get("default")),
+            profile     = s.get("profile", "") or "",
+            sample_rate = int(s.get("sample_rate") or 0),
         ))
 
+    return _dedupe_audio(result) if dedupe else result
+
+
+def _dedupe_audio(audio: list[AudioStream]) -> list[AudioStream]:
+    seen: set[tuple] = set()
+    result: list[AudioStream] = []
+    for a in audio:
+        key = (a.codec, a.language, a.channels)
+        if key in seen:
+            continue   # exact duplicate -- drop
+        seen.add(key)
+        result.append(a)
     return result
 
 

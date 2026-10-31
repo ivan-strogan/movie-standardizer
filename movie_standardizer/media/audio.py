@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .labels import track_title
 from .streams import AudioStream, ProbeResult
 from .. import config
 
@@ -42,10 +43,12 @@ def select_audio_tracks(result: ProbeResult) -> list[AudioOutputTrack]:
        exists with the same language (or both are untagged), skip the AAC --
        the passthrough already covers that slot. Otherwise encode to AC3.
     3. Keep all stereo/mono tracks as copy regardless of codec.
-    4. Preserve original stream order (passthrough first if it came first,
+    4. Drop tracks detected as neither English nor Russian.
+    5. Preserve original stream order (passthrough first if it came first,
        then converted, then stereo).
     """
-    tracks = result.audio
+    # Tracks in a language other than English/Russian are not kept
+    tracks = [t for t in result.audio if t.lang_source != "other"]
 
     # Build a set of language slots already covered by passthrough surround
     passthrough_surround_langs: set[str] = set()
@@ -62,12 +65,15 @@ def select_audio_tracks(result: ProbeResult) -> list[AudioOutputTrack]:
                 if t.language in passthrough_surround_langs:
                     continue
                 output.append(_make_ac3(t))
+            elif t.needs_resample:
+                # AC3/EAC3 not at 48 kHz: re-encode instead of copying the bad rate
+                output.append(_make_ac3(t))
             else:
                 # Passthrough surround (AC3, DTS, TrueHD, EAC3, ...)
                 output.append(_make_copy(t))
         else:
-            # Stereo / mono -- always copy
-            output.append(_make_copy(t))
+            # Stereo / mono -- copy, unless it is AC3 at a non-48 kHz rate
+            output.append(_make_ac3(t) if t.needs_resample else _make_copy(t))
 
     return output
 
@@ -96,25 +102,11 @@ def apply_audio_overrides(
 
         lang = ov.get("language") or stream.language
 
-        if action == "encode":
-            title = stream.title or (f"{lang.upper()} DD 5.1" if lang else "DD 5.1")
-            output.append(AudioOutputTrack(
-                source_index = src_idx,
-                codec_arg    = "ac3",
-                bitrate_arg  = config.AC3_BITRATE,
-                title        = title,
-                language     = lang,
-                is_default   = stream.is_default,
-            ))
+        # Never copy AC3/EAC3 that is not 48 kHz, even if the user chose "copy"
+        if action == "encode" or stream.needs_resample:
+            output.append(_make_ac3(stream, lang))
         else:
-            output.append(AudioOutputTrack(
-                source_index = src_idx,
-                codec_arg    = "copy",
-                bitrate_arg  = "",
-                title        = stream.title,
-                language     = lang,
-                is_default   = stream.is_default,
-            ))
+            output.append(_make_copy(stream, lang))
 
     return output
 
@@ -134,6 +126,8 @@ def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
         args += [f"-c:a:{i}", t.codec_arg]
         if t.bitrate_arg:
             args += [f"-b:a:{i}", t.bitrate_arg]
+        if t.codec_arg == "ac3":
+            args += [f"-ar:a:{i}", str(config.AC3_SAMPLE_RATE)]
         if t.language:
             args += [f"-metadata:s:a:{i}", f"language={t.language}"]
         if t.title:
@@ -144,30 +138,31 @@ def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_ac3(t: AudioStream) -> AudioOutputTrack:
-    # Keep original title if present, otherwise generate a descriptive one
-    if t.title:
-        title = t.title
-    elif t.language:
-        title = f"{t.language.upper()} DD 5.1"
-    else:
-        title = "DD 5.1"
+def _make_ac3(t: AudioStream, lang: str | None = None) -> AudioOutputTrack:
+    lang = t.language if lang is None else lang
+    # AC3 tops out at 5.1: ffmpeg downmixes 6.1/7.1 sources when encoding
+    out_channels = min(t.channels, 6)
     return AudioOutputTrack(
         source_index = t.index,
         codec_arg    = "ac3",
-        bitrate_arg  = config.AC3_BITRATE,
-        title        = title,
-        language     = t.language,
+        bitrate_arg  = _ac3_bitrate(t),
+        title        = track_title(lang, "ac3", out_channels),
+        language     = lang,
         is_default   = t.is_default,
     )
 
 
-def _make_copy(t: AudioStream) -> AudioOutputTrack:
+def _ac3_bitrate(t: AudioStream) -> str:
+    return config.AC3_BITRATE if t.is_surround else config.AC3_STEREO_BITRATE
+
+
+def _make_copy(t: AudioStream, lang: str | None = None) -> AudioOutputTrack:
+    lang = t.language if lang is None else lang
     return AudioOutputTrack(
         source_index = t.index,
         codec_arg    = "copy",
         bitrate_arg  = "",
-        title        = t.title,
-        language     = t.language,
+        title        = track_title(lang, t.codec, t.channels, t.profile),
+        language     = lang,
         is_default   = t.is_default,
     )

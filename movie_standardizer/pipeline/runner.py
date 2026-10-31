@@ -86,8 +86,13 @@ def run(
     # Stage 3: probe streams
     print("  Probing streams ...")
     emit("probe", 0.0, "Probing streams...")
+    # Language detection is skipped when the UI already supplied per-track audio
+    # settings (language was detected and confirmed at inspect time).
+    detect = not overrides.get("audio")
+    if detect:
+        emit("probe", 0.1, "Detecting audio language...")
     try:
-        probe_result = analyze(video_file)
+        probe_result = analyze(video_file, detect_languages=detect, movie_title=movie_info.title)
     except Exception as e:
         print(f"  ERROR probing {video_file.name}: {e}")
         emit("probe", -1.0, f"ERROR: {e}")
@@ -97,7 +102,8 @@ def run(
     print(f"  Video:  {probe_result.video.codec} {probe_result.resolution} "
           f"{probe_result.video.fps}fps {probe_result.video.bit_depth}bit")
     for a in probe_result.audio:
-        print(f"  Audio:  {a.codec} {a.channels}ch lang={a.language!r} "
+        src = f" ({a.lang_source}, {a.lang_confidence:.2f})" if a.lang_source else ""
+        print(f"  Audio:  {a.codec} {a.channels}ch {a.sample_rate}Hz lang={a.language!r}{src} "
               f"title={a.title!r}  -> {a.action}")
     print(f"  Subs:   {len(probe_result.subtitles)} track(s)")
 
