@@ -59,7 +59,7 @@ SQLite DB  (classifications.db)
 
 2. **Analyzes streams** — probes the source file with ffprobe, classifies every audio, video, and subtitle track.
 
-3. **Processes audio** — see the full audio rules below.
+3. **Processes audio** — detects the real language of every track from the audio itself, keeps only English and Russian, forces 48 kHz AC3/EAC3, sets standard titles and tags, and picks the default track from the movie's language. See the audio rules below.
 
 4. **Encodes video to AV1** — uses SVT-AV1 via ffmpeg. Before the full encode, extracts 10 one-minute clips spread across the film to find the optimal CRF that guarantees the output is smaller than the source. The full encode (video + audio + subs in one pass) then runs with that CRF.
 
@@ -172,27 +172,44 @@ These are **not** movies and will be detected and skipped with a clear message:
 
 ## Audio stream handling
 
-The goal is to preserve every meaningful audio track regardless of language, and convert AAC surround to AC3 for maximum compatibility.
+The output only contains English and Russian audio, every track has a standard title and language tag, and every AC3/EAC3 track is 48 kHz.
 
-### Rules
+### 1. Language detection (first, on every track)
 
-| Source track | Language | Channels | Action |
-|---|---|---|---|
-| AAC | any (including `und`) | 6+ (5.1 or above) | Encode → AC3 5.1 @ 640 kbps, keep same language tag |
-| AAC | any (including `und`) | 2 (stereo) | Stream copy — kept as a stereo fallback |
-| AAC | any (including `und`) | 1 (mono) | Stream copy — kept |
-| AC3 / EAC3 | any (including `und`) | any | Stream copy, no re-encode |
-| DTS / DTS-HD | any (including `und`) | any | Stream copy, no re-encode |
-| TrueHD / MLP | any (including `und`) | any | Stream copy, no re-encode |
-| Exact duplicate: same codec + same language tag + same channel count | — | — | Drop the second copy only |
+Source language tags are not trusted. For each audio track, short clips are sampled from across the film, only clips containing speech are kept (Silero VAD), and Whisper (`faster-whisper`, `small` model, CPU) detects the language of each clip.
 
-**Unknown / untagged language tracks are kept.** Most torrents don't bother setting language tags correctly, so an `und` track is just as likely to be the main audio as a tagged one. We never drop a track just because its language is unspecified.
+| Result | Meaning |
+|---|---|
+| `eng` / `rus` | Enough speech clips agree strongly (Ukrainian counts as Russian) |
+| other | Most of the speech is neither English nor Russian -> track is **dropped** |
+| inconclusive | Too little speech or clips disagree -> falls back to the title (Cyrillic -> `rus`, else `eng`) and is flagged `fallback` |
 
-The only tracks dropped are provable exact duplicates — same codec, same language, same channel count appearing more than once in the same file.
+Duplicates (same codec + language + channel count) are removed **after** detection, so two untagged tracks in different languages are both kept.
 
-### Language is preserved as-is
+### 2. Rules per track
 
-A Russian film with Russian AAC 5.1 as the main track gets Russian AC3 5.1 as the output — the language tag stays `rus`. A film with both Russian and English audio keeps both, each converted/copied according to the rules above. The "main" audio (default flag) follows whichever track had the default flag in the source.
+| Source track | Action |
+|---|---|
+| AAC 5.1 or more | Encode to AC3 5.1 @ 640 kbps, 48 kHz |
+| AAC / MP3 stereo or mono | Stream copy |
+| AC3 / EAC3 at 48 kHz | Stream copy |
+| AC3 / EAC3 not at 48 kHz | Re-encode to AC3 at 48 kHz (44.1 kHz AC3 skips and loses sync on TVs) |
+| DTS / DTS-HD / TrueHD | Stream copy |
+| Language other than English/Russian | Dropped |
+
+AC3 tops out at 5.1, so 6.1/7.1 sources are downmixed to 5.1 when re-encoded to AC3.
+
+### 3. Titles and tags
+
+Every output track gets a language tag (`eng` / `rus`) and a title `[Language] [Format] [Channels]`, describing the **output** track:
+
+`English DD 5.1`, `Russian DD 5.1`, `English DTS-HD MA 5.1`, `English TrueHD Atmos 7.1`, `English AAC 2.0`, `English DD 6.1`
+
+Formats: `DD` (AC3), `DD+` (EAC3), `DTS`, `DTS-HD MA`, `DTS-HD HRA`, `DTS:X`, `TrueHD`, `AAC`, `MP3`; `Atmos` is appended when present.
+
+### 4. Default track
+
+Exactly one audio track is flagged default: the first track in the **movie's own language**. The movie's language comes from the parsed title: a Cyrillic title means a Russian film, anything else is English. If no track is in that language, the first track is the default.
 
 ### Folder name audio suffix
 
@@ -211,12 +228,12 @@ The suffix added to the output folder name is based on the **best surround track
 
 | Source audio | Output audio | Folder suffix |
 |---|---|---|
-| AAC 5.1 eng + AAC 2ch eng | AC3 5.1 eng + AAC 2ch eng | ` AC3` |
-| AAC 5.1 rus + AAC 2ch rus | AC3 5.1 rus + AAC 2ch rus | ` AC3` |
-| AAC 5.1 eng + AAC 5.1 rus | AC3 5.1 eng + AC3 5.1 rus | ` AC3` |
-| DTS 5.1 eng + AAC 2ch eng | DTS 5.1 eng + AAC 2ch eng | ` DTS` |
-| AC3 5.1 eng | AC3 5.1 eng | ` AC3` |
-| AAC 2ch eng only | AAC 2ch eng | *(none)* |
+| AAC 5.1 eng + AAC 2ch eng | English DD 5.1 + English AAC 2.0 | ` AC3` |
+| AAC 5.1 rus + AAC 5.1 eng (English film) | Russian DD 5.1 + English DD 5.1 (English default) | ` AC3` |
+| AC3 5.1 at 44.1 kHz | English DD 5.1 re-encoded at 48 kHz | ` AC3` |
+| DTS 5.1 eng + AAC 2ch eng | English DTS 5.1 + English AAC 2.0 | ` DTS` |
+| AC3 5.1 eng + AC3 5.1 in another language | English DD 5.1 only | ` AC3` |
+| AAC 2ch eng only | English AAC 2.0 | *(none)* |
 
 ---
 
@@ -226,6 +243,7 @@ The suffix added to the output folder name is based on the **best surround track
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - ffmpeg + ffprobe with SVT-AV1 support (`brew install ffmpeg`)
 - [Ollama](https://ollama.com) running locally with `qwen3:8b` pulled
+- Audio language detection uses `faster-whisper` (installed with the project); the `small` model downloads automatically on first use
 
 ```bash
 ollama pull qwen3:8b
@@ -303,6 +321,9 @@ movie_standardizer/
 ├── media/
 │   ├── probe.py       — ffprobe wrapper
 │   ├── streams.py     — stream classification
+│   ├── language.py    — audio language detection (Whisper + VAD)
+│   ├── labels.py      — standard track titles, movie language from title
+│   ├── audio.py       — audio track selection + ffmpeg audio args
 │   └── encoder.py     — AV1 CRF probe + full encode
 ├── pipeline/
 │   ├── job.py         — Job dataclass
