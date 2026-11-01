@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .labels import track_title
+from .labels import movie_language, track_title
 from .streams import AudioStream, ProbeResult
 from .. import config
 
@@ -111,13 +111,27 @@ def apply_audio_overrides(
     return output
 
 
+def mark_default(tracks: list[AudioOutputTrack], movie_title: str) -> None:
+    """Flag exactly one track default: the first one in the movie's own language.
+
+    Falls back to the first track when none is in that language.
+    """
+    lang = movie_language(movie_title)
+    chosen = next((i for i, t in enumerate(tracks) if t.language == lang), 0)
+    for i, t in enumerate(tracks):
+        t.is_default = i == chosen
+
+
 def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
     """Build the ffmpeg -map and audio codec/bitrate arguments.
 
     Returns a flat list of ffmpeg arguments covering all audio streams.
     Stream indices in the output file are assigned in the order of output_tracks.
+    Exactly one track is flagged default: the first with is_default set, or the
+    first track if none is.
     """
     args: list[str] = []
+    default_idx = next((i for i, t in enumerate(output_tracks) if t.is_default), 0)
 
     for i, t in enumerate(output_tracks):
         args += ["-map", f"0:{t.source_index}"]
@@ -132,6 +146,7 @@ def build_audio_args(output_tracks: list[AudioOutputTrack]) -> list[str]:
             args += [f"-metadata:s:a:{i}", f"language={t.language}"]
         if t.title:
             args += [f"-metadata:s:a:{i}", f"title={t.title}"]
+        args += [f"-disposition:a:{i}", "default" if i == default_idx else "0"]
 
     return args
 

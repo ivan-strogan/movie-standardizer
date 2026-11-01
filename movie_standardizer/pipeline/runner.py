@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .job import Job
 from ..ai.name_parser import ContentSkipped, MovieInfo, parse
-from ..media.audio import apply_audio_overrides, select_audio_tracks
+from ..media.audio import apply_audio_overrides, mark_default, select_audio_tracks
 from ..media.encoder import encode
 from ..media.streams import analyze
 from .. import config
@@ -113,6 +113,7 @@ def run(
         audio_tracks = apply_audio_overrides(probe_result, audio_overrides)
     else:
         audio_tracks = select_audio_tracks(probe_result)
+    mark_default(audio_tracks, movie_info.title)
 
     print("  Audio output plan:")
     for t in audio_tracks:

@@ -8,6 +8,12 @@ from __future__ import annotations
 
 LANG_NAMES = {"eng": "English", "rus": "Russian"}
 
+
+def movie_language(title: str) -> str:
+    """Language a movie is in, guessed from its title: Cyrillic -> "rus", else "eng"."""
+    return "rus" if any("\u0400" <= ch <= "\u04ff" for ch in title) else "eng"
+
+
 _FORMAT_NAMES = {
     "ac3": "DD", "eac3": "DD+", "dts": "DTS", "dca": "DTS",
     "truehd": "TrueHD", "mlp": "TrueHD", "aac": "AAC", "mp3": "MP3",
