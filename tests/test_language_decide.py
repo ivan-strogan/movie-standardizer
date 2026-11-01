@@ -49,3 +49,15 @@ def test_clearly_other_language_is_marked_other_not_inconclusive():
 
 def test_two_other_language_clips_is_only_inconclusive():
     assert decide([(0.02, 0.01), (0.03, 0.0)]).language == ""
+
+
+def test_mostly_foreign_with_a_few_english_clips_is_other():
+    # a dub in another language that picks up a few English lines
+    foreign = [(0.02, 0.01)] * 20
+    r = decide(foreign + [(0.95, 0.0)] * 3)
+    assert r.language == "other"
+
+
+def test_english_with_some_foreign_clips_stays_english():
+    r = decide([(0.98, 0.0)] * 15 + [(0.02, 0.01)] * 3)
+    assert r.language == "eng"

@@ -26,6 +26,7 @@ MIN_CLIPS        = 3       # fewer speech clips than this -> inconclusive
 MIN_SPEECH_SECS  = 15      # a clip counts only if this much of it is speech
 MIN_EN_RU_MASS   = 0.5     # a clip must put at least this probability on en+ru
 MIN_AGREEMENT    = 0.9     # winner's share of the en+ru probability, summed
+MAX_FOREIGN_SHARE = 0.75   # if more than this share of speech clips is neither en nor ru -> "other"
 
 
 @dataclass
@@ -42,9 +43,10 @@ def decide(clips: list[tuple[float, float]]) -> LanguageResult:
     p_ru includes Ukrainian (a Ukrainian track is tagged Russian).
     """
     usable = [(en, ru) for en, ru in clips if en + ru >= MIN_EN_RU_MASS]
-    if not usable and len(clips) >= MIN_CLIPS:
+    foreign = len(clips) - len(usable)
+    if len(clips) >= MIN_CLIPS and foreign > MAX_FOREIGN_SHARE * len(clips):
         return LanguageResult("other", 0.0, len(clips),
-                              "speech is neither English nor Russian")
+                              "speech is mostly neither English nor Russian")
     if len(usable) < MIN_CLIPS:
         return LanguageResult("", 0.0, len(usable),
                               f"only {len(usable)} clip(s) clearly English or Russian")
