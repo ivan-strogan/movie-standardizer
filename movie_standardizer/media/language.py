@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import config
+from .labels import movie_language
 from .streams import AudioStream
 
 SAMPLE_RATE      = 16000
@@ -127,5 +128,4 @@ def assign_languages(path: Path, audio: list[AudioStream], duration: float,
         elif result.language:
             a.language, a.lang_source, a.lang_confidence = result.language, "detected", result.confidence
         else:
-            cyrillic = any("Ѐ" <= ch <= "ӿ" for ch in movie_title)
-            a.language, a.lang_source, a.lang_confidence = ("rus" if cyrillic else "eng"), "fallback", 0.0
+            a.language, a.lang_source, a.lang_confidence = movie_language(movie_title), "fallback", 0.0
